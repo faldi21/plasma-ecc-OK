@@ -1,0 +1,33 @@
+{
+  "name": "plasma-ecc-relay",
+  "version": "1.0.0",
+  "description": "Plasma ECC Relay Service - L1↔L2 Bridge Daemon",
+  "main": "dist/relay.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/relay.ts",
+    "build": "tsc",
+    "start": "node dist/relay.js",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "plasma",
+    "layer2",
+    "relay",
+    "bridge",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "viem": "^2.21.45",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}

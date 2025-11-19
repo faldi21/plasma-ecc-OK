@@ -1,0 +1,40 @@
+{
+  "name": "plasma-ecc-backend",
+  "version": "1.0.0",
+  "description": "Plasma ECC Layer 2 Backend with TypeScript and Viem",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "plasma",
+    "layer2",
+    "ecc",
+    "blockchain",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "viem": "^2.21.45",
+    "elliptic": "^6.5.7",
+    "bn.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/node": "^20.11.5",
+    "@types/elliptic": "^6.4.18",
+    "@types/bn.js": "^5.1.5",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}
