@@ -1,0 +1,26 @@
+{
+  "name": "plasma-ecc-benchmark",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Load testing and benchmarking tools for Plasma ECC Layer 2",
+  "scripts": {
+    "build": "tsc",
+    "test:api": "tsx load-test-api.ts",
+    "test:quick": "tsx load-test-api.ts 10 5 transfer 1",
+    "test:medium": "tsx load-test-api.ts 50 10 transfer 1",
+    "test:heavy": "tsx load-test-api.ts 100 20 transfer 1",
+    "test:deposits": "tsx load-test-api.ts 50 10 deposit 10",
+    "test:throughput": "tsx load-test-high-throughput.ts",
+    "test:tps": "tsx load-test-high-throughput.ts 100 20 0.1",
+    "test:tps:extreme": "tsx load-test-high-throughput.ts 200 50 0.1"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
