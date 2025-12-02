@@ -69,6 +69,30 @@ app.post('/api/transfer', async (req: Request, res: Response) => {
   }
 });
 
+// Request withdrawal endpoint
+app.post('/api/request-withdrawal', async (req: Request, res: Response) => {
+  try {
+    const { userAddress, tokenAddress, amount } = req.body as {
+      userAddress: Address;
+      tokenAddress: Address;
+      amount: string;
+    };
+
+    if (!userAddress || !tokenAddress || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: userAddress, tokenAddress, amount',
+      });
+    }
+
+    const result = await plasmaService.requestWithdrawal(userAddress, tokenAddress, amount);
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    console.error('Request withdrawal error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start exit endpoint
 app.post('/api/exit', async (req: Request, res: Response) => {
   try {
@@ -322,6 +346,56 @@ app.post('/api/accumulator/add', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Add to accumulator error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notify transaction from Relay (NEW)
+app.post('/api/transactions/notify', async (req: Request, res: Response) => {
+  try {
+    const { type, txHash, from, to, token, amount, blockNumber } = req.body as {
+      type: 'DEPOSIT' | 'TRANSFER' | 'WITHDRAWAL';
+      txHash: Hex;
+      from?: Address;
+      to?: Address;
+      token?: Address;
+      amount?: string;
+      blockNumber?: string;
+    };
+
+    if (!type || !txHash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: type, txHash',
+      });
+    }
+
+    console.log(`[Backend] 📨 Received transaction notification from Relay:`);
+    console.log(`  Type: ${type}`);
+    console.log(`  TxHash: ${txHash}`);
+    if (from) console.log(`  From: ${from}`);
+    if (to) console.log(`  To: ${to}`);
+    if (amount) console.log(`  Amount: ${amount}`);
+
+    // Add transaction to backend's pending pool for block submission
+    const result = await plasmaService.addPendingTransaction({
+      type,
+      txHash,
+      from,
+      to,
+      token,
+      amount,
+      blockNumber: blockNumber ? BigInt(blockNumber) : undefined,
+      timestamp: Date.now(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Transaction added to pending pool',
+      pendingCount: plasmaService.getPendingTransactions().length,
+    });
+  } catch (error: any) {
+    console.error('Notify transaction error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

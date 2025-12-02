@@ -10,6 +10,8 @@ import {
   parseEther,
   formatEther,
   parseGwei,
+  keccak256,
+  toBytes,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
@@ -50,6 +52,34 @@ const l2Chain = {
  * - Event monitoring
  * - Exit handling
  */
+// Simple Mutex implementation
+class Mutex {
+  private mutex = Promise.resolve();
+
+  lock(): Promise<() => void> {
+    let begin: (unlock: void) => void = () => {};
+
+    this.mutex = this.mutex.then(() => {
+      return new Promise<void>((resolve) => {
+        begin = resolve;
+      });
+    });
+
+    return new Promise((resolve) => {
+      resolve(() => begin());
+    });
+  }
+
+  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
+    const unlock = await this.lock();
+    try {
+      return await callback();
+    } finally {
+      unlock();
+    }
+  }
+}
+
 export class PlasmaService {
   // Clients
   private readonly l1PublicClient: PublicClient;
@@ -60,6 +90,12 @@ export class PlasmaService {
   // Accounts
   private readonly operatorAccount: ReturnType<typeof privateKeyToAccount>;
   private readonly l2OperatorAccount: ReturnType<typeof privateKeyToAccount>;
+
+  // Operator Nonce Management
+  private l1OperatorNonce: bigint | null = null;
+  private l2OperatorNonce: number | null = null;
+  private l1Mutex = new Mutex();
+  private l2Mutex = new Mutex();
 
   // Accumulator
   private readonly accumulator: AccumulatorService;
@@ -154,6 +190,20 @@ export class PlasmaService {
   /**
    * Process a transfer on L2
    */
+  // Optimistic Nonce Cache
+  private nonceCache = new Map<string, bigint>();
+  private userMutexes = new Map<string, Mutex>();
+
+  private getUserMutex(address: string): Mutex {
+    if (!this.userMutexes.has(address)) {
+      this.userMutexes.set(address, new Mutex());
+    }
+    return this.userMutexes.get(address)!;
+  }
+
+  /**
+   * Process a transfer on L2 (Optimistic & Async)
+   */
   public async processTransfer(
     from: Address,
     to: Address,
@@ -163,85 +213,165 @@ export class PlasmaService {
     nonce: string,
     timestamp?: number
   ): Promise<TransferResult> {
-    try {
-      console.log('Processing transfer:', { from, to, tokenAddress, amount, nonce, timestamp });
+    const userMutex = this.getUserMutex(from);
+    return await userMutex.runExclusive(async () => {
+        try {
+        // console.log('Processing transfer (Async):', { from, nonce });
 
-      // Verify nonce matches
-      const currentNonce = (await this.l2PublicClient.readContract({
-        address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
-        abi: plasmaChainAbi,
-        functionName: 'nonces',
-        args: [from],
-      })) as bigint;
+        // 1. Determine expected nonce
+        let expectedNonce = this.nonceCache.get(from);
+        
+        // If not in cache, fetch from chain
+        if (expectedNonce === undefined) {
+            const currentNonce = (await this.l2PublicClient.readContract({
+            address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+            abi: plasmaChainAbi,
+            functionName: 'nonces',
+            args: [from],
+            })) as bigint;
+            expectedNonce = currentNonce;
+            this.nonceCache.set(from, expectedNonce);
+        }
 
-      console.log('Current nonce for', from, ':', currentNonce.toString(), 'Provided nonce:', nonce);
+        // 2. Validate incoming nonce
+        if (BigInt(nonce) !== expectedNonce) {
+            // Double check with chain to be safe (in case cache is stale/wrong)
+            const onChainNonce = (await this.l2PublicClient.readContract({
+            address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+            abi: plasmaChainAbi,
+            functionName: 'nonces',
+            args: [from],
+            })) as bigint;
 
-      if (currentNonce.toString() !== nonce) {
-        throw new Error(`Nonce mismatch. Current: ${currentNonce}, Provided: ${nonce}`);
-      }
+            if (BigInt(nonce) !== onChainNonce && BigInt(nonce) !== expectedNonce) {
+            throw new Error(`Nonce mismatch. Expected: ${expectedNonce} or ${onChainNonce}, Provided: ${nonce}`);
+            }
+            
+            // If it matches on-chain, update cache
+            if (BigInt(nonce) === onChainNonce) {
+            expectedNonce = onChainNonce;
+            this.nonceCache.set(from, expectedNonce);
+            }
+        }
 
-      // Execute transaction on L2
-      const amountWei = parseEther(amount);
+        // 3. Update cache optimisticly for NEXT transaction
+        this.nonceCache.set(from, expectedNonce + 1n);
 
-      const hash = await this.l2WalletClient.writeContract({
-        address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
-        abi: plasmaChainAbi,
-        functionName: 'executeTransaction',
-        args: [from, to, tokenAddress, amountWei, BigInt(nonce), signature],
-      });
+        // 4. Submit transaction (Async) with Operator Nonce Management
+        const amountWei = parseEther(amount);
+        
+        const hash = await this.l2Mutex.runExclusive(async () => {
+            // Initialize operator nonce if needed
+            if (this.l2OperatorNonce === null) {
+                this.l2OperatorNonce = await this.l2PublicClient.getTransactionCount({
+                    address: this.l2OperatorAccount.address
+                });
+                console.log(`Initialized L2 Operator Nonce: ${this.l2OperatorNonce}`);
+            }
 
+            let retries = 0;
+            while (retries < 100) {
+                const nonceToUse = this.l2OperatorNonce;
+                try {
+                    const hash = await this.l2WalletClient.writeContract({
+                        address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+                        abi: plasmaChainAbi,
+                        functionName: 'executeTransaction',
+                        args: [from, to, tokenAddress, amountWei, BigInt(nonce), signature],
+                        nonce: nonceToUse,
+                        gas: 5000000n, // Hardcoded gas limit (increased to 5M for ECC operations)
+                    });
+                    
+                    // Success! Increment for next transaction
+                    this.l2OperatorNonce++;
+                    return hash;
+                } catch (error: any) {
+                    const msg = error.message || error.details || '';
+                    if (error.message.includes('nonce too low') || error.message.includes('replacement transaction underpriced')) {
+                        console.warn(`[Operator] L2 Nonce ${nonceToUse} too low or underpriced, incrementing...`);
+                        this.l2OperatorNonce = nonceToUse + 1;
+                        // Retry loop will pick up new nonce
+                    } else if (msg.toLowerCase().includes('nonce too high')) {
+                        console.log(`Operator L2 Nonce ${this.l2OperatorNonce} too high. Decrementing.`);
+                        this.l2OperatorNonce--;
+                    } else {
+                        throw error;
+                    }
+                    retries++;
+                }
+            }
+            throw new Error('Failed to send transaction after nonce retries');
+        });
+
+        // 5. Background processing (Fire-and-Forget)
+        this.handleTransactionConfirmation(hash, from, to, tokenAddress, amountWei, timestamp)
+            .catch(err => {
+                console.error(`Background tx failed for ${from} nonce ${nonce}:`, err);
+                this.nonceCache.delete(from); // Invalidate cache on error
+            });
+
+        // 6. Return success immediately
+        return {
+            success: true,
+            txHash: hash, // Returning L2 hash as placeholder
+            l2TxHash: hash,
+            from,
+            to,
+            amount,
+            status: 'PENDING',
+            timestamp: timestamp || Date.now()
+        } as any; // Cast to any because TransferResult might expect more fields
+
+        } catch (error: any) {
+        console.error('Process transfer error:', error.message);
+        throw error;
+        }
+    });
+  }
+
+  /**
+   * Handle transaction confirmation in background
+   */
+  private async handleTransactionConfirmation(
+      hash: Hex, 
+      from: Address, 
+      to: Address, 
+      tokenAddress: Address, 
+      amountWei: bigint,
+      timestamp?: number
+  ) {
       const receipt = await this.l2PublicClient.waitForTransactionReceipt({ hash });
-
-      console.log('Transfer transaction executed:', hash);
-
+      
       // Get transaction hash from event
       let txHash: Hex | undefined;
       for (const log of receipt.logs) {
         try {
           // Find TransactionExecuted event
-          if (log.topics[0] === keccak256(encodeAbiParameters(parseAbiParameters('string'), ['TransactionExecuted(bytes32,address,address,address,uint256,uint256)']))) {
-            txHash = log.topics[1] as Hex; // txHash is the first indexed parameter
+          // Signature: TransactionExecuted(bytes32,address,address)
+          const eventSignature = keccak256(toBytes('TransactionExecuted(bytes32,address,address)'));
+          if (log.topics[0] === eventSignature) {
+            txHash = log.topics[1] as Hex; 
             break;
           }
         } catch {}
       }
 
-      if (!txHash) {
-        throw new Error('Transaction hash not found in events');
+      if (txHash) {
+          // Add to pending transactions
+          this.pendingTransactions.push({
+            txHash,
+            from,
+            to,
+            tokenAddress,
+            amount: amountWei,
+            timestamp: timestamp || Date.now(),
+            l2TxHash: hash,
+          });
+
+          // Add to accumulator
+          await this.accumulator.add(txHash);
+          // console.log(`Background: Tx confirmed ${txHash}`);
       }
-
-      console.log('Transaction hash from event:', txHash);
-
-      // Add to pending transactions
-      this.pendingTransactions.push({
-        txHash,
-        from,
-        to,
-        tokenAddress,
-        amount: amountWei,
-        timestamp: Date.now(),
-        l2TxHash: hash,
-      });
-
-      console.log(`🔍 [DEBUG] Transaction added to pending pool. Total pending: ${this.pendingTransactions.length}`);
-
-      // Add to accumulator
-      await this.accumulator.add(txHash);
-
-      console.log(`Transaction added to pending pool. Total pending: ${this.pendingTransactions.length}`);
-
-      return {
-        success: true,
-        txHash,
-        l2TxHash: hash,
-        from,
-        to,
-        amount,
-      };
-    } catch (error: any) {
-      console.error('Process transfer error:', error.message);
-      throw error;
-    }
   }
 
   /**
@@ -298,6 +428,7 @@ export class PlasmaService {
         abi: plasmaChainAbi,
         functionName: 'createBlockWithTransactions',
         args: [txHashes],
+        gas: 10000000n, // Hardcoded gas limit (10M) to prevent OOG/Crash
       });
 
       const receipt = await this.l2PublicClient.waitForTransactionReceipt({ hash });
@@ -341,16 +472,52 @@ export class PlasmaService {
           gasEstimate = 5000000n; // 5M gas as fallback
         }
 
-        // Submit with explicit gas limit
-        submitTxHash = await this.l1WalletClient.writeContract({
-          address: envConfig.ROOT_CHAIN_ADDRESS,
-          abi: rootChainAbi,
-          functionName: 'submitBlock',
-          args: [accumulatorArray, BigInt(txHashes.length), txHashes],
-          gas: (gasEstimate * 12n) / 10n, // Add 20% buffer
+        // Submit with explicit gas limit and mutex
+        await this.l1Mutex.runExclusive(async () => {
+             // Initialize L1 nonce if needed
+             if (this.l1OperatorNonce === null) {
+                this.l1OperatorNonce = BigInt(await this.l1PublicClient.getTransactionCount({
+                    address: this.operatorAccount.address
+                }));
+             }
+
+             // Fetch the actual next valid nonce from the chain (pending)
+             // This handles cases where we have a nonce gap due to failed L2 transactions
+             const pendingNonce = BigInt(await this.l1PublicClient.getTransactionCount({
+                 address: this.operatorAccount.address,
+                 blockTag: 'pending'
+             }));
+
+             console.log(`🔒 [SubmitBlock] Using pending nonce: ${pendingNonce} (Local: ${this.l1OperatorNonce})`);
+             
+             // Update local nonce if we are behind (shouldn't happen if we fill gaps)
+             // Or if we are ahead (gap), we fill the gap with this tx
+             if (pendingNonce > this.l1OperatorNonce) {
+                 this.l1OperatorNonce = pendingNonce;
+             }
+             
+             // If pendingNonce < operatorNonce, it means we have pending txs in mempool that Anvil knows about.
+             // We should trust Anvil's pending count for the NEXT valid nonce.
+             
+             const nonceToUse = pendingNonce;
+             
+             // Update local nonce for future transactions
+             this.l1OperatorNonce = nonceToUse + 1n;
+
+             submitTxHash = await this.l1WalletClient.writeContract({
+              address: envConfig.ROOT_CHAIN_ADDRESS,
+              abi: rootChainAbi,
+              functionName: 'submitBlock',
+              args: [accumulatorArray, BigInt(txHashes.length), txHashes],
+              gas: 1000000n, // Hardcoded 1M gas to ensure it's not OOG
+              nonce: Number(nonceToUse), // Use managed nonce
+            });
         });
 
-        const submitReceipt = await this.l1PublicClient.waitForTransactionReceipt({ hash: submitTxHash });
+        const submitReceipt = await this.l1PublicClient.waitForTransactionReceipt({ 
+          hash: submitTxHash,
+          timeout: 300000, // 300 seconds (5 min) timeout for large backlogs
+        });
 
         console.log(`✅ Block submitted to L1: ${submitTxHash} (gas used: ${submitReceipt.gasUsed.toString()})`);
       } catch (error: any) {
@@ -437,7 +604,27 @@ export class PlasmaService {
         },
       });
 
-      console.log('✅ L2 event listeners set up');
+      // Watch for WithdrawalRequested events
+      this.l2PublicClient.watchContractEvent({
+        address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+        abi: plasmaChainAbi,
+        eventName: 'WithdrawalRequested',
+        onLogs: async (logs) => {
+          for (const log of logs) {
+            try {
+              const { txHash, user, token, amount } = log.args as any;
+              if (txHash && user && token && amount !== undefined) {
+                console.log(`💸 [L2 Withdrawal] Detected: ${user} → L1, token: ${token}, amount: ${amount}, hash: ${txHash}`);
+                await this.addTransactionToPending(txHash, user, '0x0000000000000000000000000000000000000000', 'withdrawal', log.blockNumber);
+              }
+            } catch (error: any) {
+              console.error('Error processing WithdrawalRequested event:', error.message);
+            }
+          }
+        },
+      });
+
+      console.log('✅ L2 event listeners set up (Transfer, Deposit, Withdrawal)');
     } catch (error: any) {
       console.error('Error setting up L2 event monitoring:', error.message);
     }
@@ -491,9 +678,13 @@ export class PlasmaService {
 
     // Schedule block creation after a short delay
     this.blockCreationTimer = setTimeout(async () => {
-      if (this.pendingTransactions.length > 0 && !this.isCreatingBlock) {
-        console.log(`⏰ [Scheduled Block] Creating block with ${this.pendingTransactions.length} pending transactions`);
-        await this.createBlock();
+      try {
+        if (this.pendingTransactions.length > 0 && !this.isCreatingBlock) {
+          console.log(`⏰ [Scheduled Block] Creating block with ${this.pendingTransactions.length} pending transactions`);
+          await this.createBlock();
+        }
+      } catch (error: any) {
+        console.error('❌ Error in scheduled block creation:', error.message);
       }
       this.blockCreationTimer = null;
     }, 2000); // 2 seconds debounce
@@ -574,6 +765,96 @@ export class PlasmaService {
       ...tx,
       timestamp: tx.timestamp,
     }));
+  }
+
+  /**
+   * Add pending transaction (called by Relay via API)
+   */
+  public async addPendingTransaction(tx: {
+    type: string;
+    txHash: Hex;
+    from?: Address;
+    to?: Address;
+    token?: Address;
+    amount?: string;
+    blockNumber?: bigint;
+    timestamp: number;
+  }): Promise<boolean> {
+    // Check if already processed
+    if (this.processedTxHashes.has(tx.txHash)) {
+      console.log(`[Backend] ⏭️  Transaction already processed: ${tx.txHash}`);
+      return false;
+    }
+
+    // Add to pending pool
+    this.pendingTransactions.push({
+      txHash: tx.txHash,
+      timestamp: tx.timestamp,
+    });
+
+    this.processedTxHashes.add(tx.txHash);
+
+    // Add to accumulator
+    await this.accumulator.add(tx.txHash);
+
+    console.log(`[Backend] ✅ Transaction added to pending pool (total: ${this.pendingTransactions.length})`);
+
+    return true;
+  }
+
+  /**
+   * Request withdrawal from L2 to L1
+   */
+  public async requestWithdrawal(
+    userAddress: Address,
+    tokenAddress: Address,
+    amount: string
+  ): Promise<{ success: boolean; txHash: Hex; withdrawalTxHash: Hex; amount: string }> {
+    try {
+      console.log(`💸 Requesting withdrawal for user ${userAddress}`);
+      console.log(`Token: ${tokenAddress}, Amount: ${amount}`);
+
+      const amountWei = parseEther(amount);
+
+      // Call requestWithdrawal on L2 PlasmaChain
+      const hash = await this.l2WalletClient.writeContract({
+        address: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+        abi: plasmaChainAbi,
+        functionName: 'requestWithdrawal',
+        args: [tokenAddress, amountWei, '0x'], // Empty signature for direct call
+      });
+
+      const receipt = await this.l2PublicClient.waitForTransactionReceipt({ hash });
+      console.log(`✅ Withdrawal requested: ${hash}`);
+
+      // Find WithdrawalRequested event to get withdrawal txHash
+      let withdrawalTxHash: Hex | undefined;
+      for (const log of receipt.logs) {
+        try {
+          // WithdrawalRequested has txHash as first indexed parameter
+          if (log.topics.length >= 2) {
+            withdrawalTxHash = log.topics[1] as Hex;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!withdrawalTxHash) {
+        throw new Error('Withdrawal transaction hash not found in events');
+      }
+
+      console.log(`📝 Withdrawal TxHash: ${withdrawalTxHash}`);
+
+      return {
+        success: true,
+        txHash: hash,
+        withdrawalTxHash,
+        amount,
+      };
+    } catch (error) {
+      console.error('Request withdrawal error:', error);
+      throw error;
+    }
   }
 
   /**

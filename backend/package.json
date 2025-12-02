@@ -6,10 +6,15 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:fast": "tsx watch src/server-fast.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:fast": "node dist/server-fast.js",
     "type-check": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "migrate": "tsx src/scripts/migrate-to-redis.ts",
+    "test:withdrawal": "tsx src/scripts/test-withdrawal.ts",
+    "test:withdrawal:api": "tsx src/scripts/test-withdrawal-api.ts"
   },
   "keywords": [
     "plasma",
@@ -21,20 +26,23 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
+    "axios": "^1.13.2",
+    "bn.js": "^5.2.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "viem": "^2.21.45",
     "elliptic": "^6.5.7",
-    "bn.js": "^5.2.1"
+    "express": "^4.18.2",
+    "ioredis": "^5.8.2",
+    "viem": "^2.21.45"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/cors": "^2.8.17",
-    "@types/node": "^20.11.5",
-    "@types/elliptic": "^6.4.18",
     "@types/bn.js": "^5.1.5",
-    "typescript": "^5.3.3",
-    "tsx": "^4.7.0"
+    "@types/cors": "^2.8.17",
+    "@types/elliptic": "^6.4.18",
+    "@types/express": "^4.17.21",
+    "@types/ioredis": "^4.28.10",
+    "@types/node": "^20.11.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }
