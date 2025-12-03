@@ -18,7 +18,10 @@ async function testDeposit() {
     // const userWallet = new ethers.Wallet('873f5eb8696d033c40d9990310b9c618bf8defdcec4e0c3abc2db3f88e451080', provider);
 
     //wallet 0x62dc14Fe819A241e176ee6A813f51045d04A0cda
-    const userWallet = new ethers.Wallet('79d5afa4d8b4e755efddefc8aa9f0cce663e9e96317e1d234d001824197794d1', provider);
+    //const userWallet = new ethers.Wallet('79d5afa4d8b4e755efddefc8aa9f0cce663e9e96317e1d234d001824197794d1', provider);
+
+    //wallet 0xfa5410ca7e30c694d332a0b7f5ff5ef74d84e0ab
+    const userWallet = new ethers.Wallet('0x070d8f7d287854522182733db1f2f5fc4609480167dced6a1e93213b22694aa3', provider);
 
      //const userWallet = new ethers.Wallet('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', provider);
     
@@ -53,7 +56,7 @@ async function testDeposit() {
     const rootChain = new ethers.Contract(process.env.ROOT_CHAIN_ADDRESS, rootChainABI, userWallet);
     console.log('rootChain.target:', rootChain.target); // debug
 
-    const depositAmount = ethers.parseEther('1000');
+    const depositAmount = ethers.parseEther('2000');
 
     // ...existing code...
 

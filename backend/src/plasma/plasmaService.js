@@ -107,20 +107,26 @@ class PlasmaService {
             const receipt = await tx.wait();
             
             console.log('Transfer transaction executed:', receipt.hash);
+            console.log('Receipt logs count:', receipt.logs.length);
             
             // Get transaction hash from event
             let txHash;
             const event = receipt.logs.find(log => {
                 try {
                     const parsed = this.plasmaChain.interface.parseLog(log);
+                    console.log('Parsed log:', parsed ? parsed.name : 'null');
                     if (parsed.name === 'TransactionExecuted') {
                         txHash = parsed.args.txHash;
                         return true;
                     }
-                } catch { return false; }
+                } catch (e) { 
+                    console.log('Parse log error:', e.message);
+                    return false; 
+                }
             });
             
             if (!txHash) {
+                console.log('All logs:', JSON.stringify(receipt.logs, null, 2));
                 throw new Error('Transaction hash not found in events');
             }
             

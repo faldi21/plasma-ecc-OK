@@ -44,6 +44,7 @@ contract PlasmaChain {
     event TransactionExecuted(bytes32 indexed txHash, address indexed from, address indexed to);
     event BlockCreated(uint256 indexed blockNumber, uint256 transactionCount);
     event BalanceUpdated(address indexed user, address indexed token, uint256 amount, bytes32 txHash);
+    event WithdrawalRequested(bytes32 indexed txHash, address indexed user, address indexed token, uint256 amount, uint256 nonce);
 
     modifier onlyOperator() {
         require(msg.sender == operator, "Only operator");
@@ -232,17 +233,71 @@ contract PlasmaChain {
         returns (uint8, bytes32, bytes32)
     {
         require(sig.length == 65, "Invalid signature length");
-        
+
         bytes32 r;
         bytes32 s;
         uint8 v;
-        
+
         assembly {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
         }
-        
+
         return (v, r, s);
+    }
+
+    /**
+     * @dev Request withdrawal from L2 to L1
+     * User burns/locks tokens on L2 and gets a withdrawal transaction
+     * This transaction will be included in a block and can be used to exit on L1
+     */
+    function requestWithdrawal(
+        address token,
+        uint256 amount,
+        bytes memory /* signature */
+    ) external returns (bytes32) {
+        address user = msg.sender;
+        uint256 nonce = nonces[user];
+
+        // Verify user has sufficient balance
+        require(balances[user][token] >= amount, "Insufficient balance");
+
+        // Create withdrawal transaction hash
+        bytes32 txHash = keccak256(abi.encodePacked(
+            user,
+            address(0), // to = address(0) indicates withdrawal
+            token,
+            amount,
+            nonce,
+            "WITHDRAWAL" // type identifier
+        ));
+
+        // Reduce balance on L2 (burn/lock)
+        balances[user][token] -= amount;
+        nonces[user]++;
+
+        // Store withdrawal transaction
+        transactions[txHash] = Transaction({
+            from: user,
+            to: address(0), // address(0) indicates withdrawal
+            token: token,
+            amount: amount,
+            nonce: nonce,
+            blockNumber: currentBlock + 1,
+            txHash: txHash
+        });
+
+        // Add to pending transactions
+        pendingTransactions.push(txHash);
+
+        // Add to accumulator
+        accumulator.add(txHash);
+
+        // Emit event for relay to detect
+        emit WithdrawalRequested(txHash, user, token, amount, nonce);
+        emit TransactionExecuted(txHash, user, address(0));
+
+        return txHash;
     }
 }

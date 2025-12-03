@@ -289,6 +289,7 @@ async function main() {
       '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address,
       '0x62dc14Fe819A241e176ee6A813f51045d04A0cda' as Address,    
       '0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76' as Address, 
+      '0xfa5410ca7e30c694d332a0b7f5ff5ef74d84e0ab' as Address, 
     );
   }
 

@@ -4,20 +4,19 @@ import { loadConfig, printConfig } from './config.js';
 import { StateManager } from './state.js';
 import { L1Monitor } from './l1-monitor.js';
 import { L2Executor } from './l2-executor.js';
-import { BlockSubmitter } from './block-submitter.js';
 import type { DepositEvent } from './types.js';
 import type { Hex } from 'viem';
 
 /**
  * Plasma ECC Relay Service
- * Monitors L1 deposits, relays to L2, and submits blocks back to L1
+ * Monitors L1 deposits and relays to L2
+ * Notifies Backend for block submission
  */
 class RelayService {
   private config = loadConfig();
   private state = new StateManager(this.config.l1FromBlock);
   private l1Monitor = new L1Monitor(this.config);
   private l2Executor = new L2Executor(this.config);
-  private blockSubmitter = new BlockSubmitter(this.config, this.l1Monitor);
   private isRunning = false;
 
   /**
@@ -38,23 +37,17 @@ class RelayService {
     console.log(`  Last L1 block:       ${stats.lastBlock}`);
     console.log(`  Processed tx count:  ${stats.processedCount}`);
     console.log(`  Relayed deposits:    ${stats.relayedDeposits}`);
-    if (stats.lastSubmittedBlock) {
-      console.log(`  Last submitted block: ${stats.lastSubmittedBlock}`);
-      this.blockSubmitter.setCurrentBlockNumber(stats.lastSubmittedBlock + 1);
-    }
     console.log('');
 
     // Setup graceful shutdown
     this.setupGracefulShutdown();
-
-    // Start block submitter
-    this.blockSubmitter.start();
 
     // Start monitoring L1
     this.isRunning = true;
     const fromBlock = stats.lastBlock;
 
     console.log('🚀 Starting relay service...\n');
+    console.log('📌 Relay will notify Backend for block submission\n');
 
     await this.l1Monitor.startMonitoring(fromBlock, async (deposit) => {
       await this.handleDeposit(deposit);
@@ -65,25 +58,34 @@ class RelayService {
   }
 
   /**
-   * Add transaction hash to backend accumulator
+   * Notify Backend about new transaction
    */
-  private async addToBackendAccumulator(txHash: Hex): Promise<void> {
+  private async notifyBackend(tx: {
+    type: 'DEPOSIT' | 'TRANSFER' | 'WITHDRAWAL';
+    txHash: Hex;
+    from?: string;
+    to?: string;
+    token?: string;
+    amount?: string;
+    blockNumber?: string;
+  }): Promise<void> {
     try {
       const apiUrl = this.config.l2ApiUrl || 'http://localhost:3001';
       const response = await axios.post(
-        `${apiUrl}/api/accumulator/add`,
-        { txHash },
+        `${apiUrl}/api/transactions/notify`,
+        tx,
         { timeout: 10000 }
       );
 
       if (response.data?.success) {
-        console.log(`[Relay] ✅ Added to accumulator (size: ${response.data.size})`);
+        console.log(`[Relay] ✅ Notified Backend about ${tx.type} transaction`);
+        console.log(`[Relay]    Pending in Backend: ${response.data.pendingCount}`);
       } else {
-        console.error(`[Relay] ⚠️  Failed to add to accumulator: ${response.data?.error}`);
+        console.error(`[Relay] ⚠️  Failed to notify Backend: ${response.data?.error}`);
       }
     } catch (error: any) {
-      console.error(`[Relay] ⚠️  Error adding to accumulator: ${error.message}`);
-      // Don't throw - this is not critical for relay flow
+      console.error(`[Relay] ⚠️  Error notifying Backend: ${error.message}`);
+      // Don't throw - deposit already succeeded on L2
     }
   }
 
@@ -132,22 +134,21 @@ class RelayService {
         console.log(`  mint tx:          ${result.mintTxHash}`);
       }
 
-      // Add to backend accumulator
-      await this.addToBackendAccumulator(result.l2TxHash);
+      // Notify Backend about deposit transaction
+      await this.notifyBackend({
+        type: 'DEPOSIT',
+        txHash: result.l2TxHash,
+        from: deposit.user,
+        to: deposit.user,
+        token: deposit.token,
+        amount: deposit.amount.toString(),
+        blockNumber: deposit.blockNumber.toString(),
+      });
 
       // Mark as processed
       this.state.markProcessed(depositKey);
       this.state.updateLastBlock(deposit.blockNumber);
       this.state.incrementRelayedDeposits();
-
-      // Add to block submitter
-      await this.blockSubmitter.addTransaction(result.l2TxHash);
-
-      // Update state with last submitted block if changed
-      const submitterStats = this.blockSubmitter.getStats();
-      if (submitterStats.currentBlock > 1) {
-        this.state.updateLastSubmittedBlock(submitterStats.currentBlock - 1);
-      }
 
       console.log('═══════════════════════════════════════════════════════');
       console.log('');
@@ -172,18 +173,6 @@ class RelayService {
 
     // Stop monitoring
     this.l1Monitor.stopMonitoring();
-
-    // Stop block submitter
-    this.blockSubmitter.stop();
-
-    // Force submit any pending transactions
-    const stats = this.blockSubmitter.getStats();
-    if (stats.pendingTxCount > 0) {
-      console.log(
-        `\n📤 Submitting ${stats.pendingTxCount} pending transaction(s)...`
-      );
-      await this.blockSubmitter.forceSubmit();
-    }
 
     console.log('✅ Relay service stopped\n');
   }
@@ -219,12 +208,10 @@ class RelayService {
   public getStatus(): {
     isRunning: boolean;
     state: ReturnType<StateManager['getStats']>;
-    submitter: ReturnType<BlockSubmitter['getStats']>;
   } {
     return {
       isRunning: this.isRunning,
       state: this.state.getStats(),
-      submitter: this.blockSubmitter.getStats(),
     };
   }
 }
