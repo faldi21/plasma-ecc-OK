@@ -113,19 +113,20 @@ async function main() {
   if (addresses.length === 0) {
     console.log('ℹ️  No addresses provided. Using default test addresses...\n');
     addresses.push(
-      '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address, // Anvil account 0
-      '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address, // Anvil account 1
-      '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address, // Anvil account 2
-      '0x62dc14Fe819A241e176ee6A813f51045d04A0cda' as Address,
-      '0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76' as Address,
+      '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address,
+      '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address,
+      '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address,
+      '0x62dc14Fe819A241e176ee6A813f51045d04A0cda' as Address,    
+      '0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76' as Address, 
+      '0xfa5410ca7e30c694d332a0b7f5ff5ef74d84e0ab' as Address, 
     );
   }
 
   // Check balances
   console.log('📊 Balances:\n');
-  console.log('━'.repeat(80));
-  console.log('Address'.padEnd(45) + 'ETH'.padEnd(20) + 'PLASMA Token');
-  console.log('━'.repeat(80));
+  console.log('━'.repeat(90));
+  console.log('Address'.padEnd(45) + 'ETH'.padEnd(15) + 'PLASMA Token'.padEnd(20) + 'Nonce');
+  console.log('━'.repeat(90));
 
   for (const address of addresses) {
     try {
@@ -135,17 +136,27 @@ async function main() {
       // Get PlasmaToken balance
       const tokenBalance = await getBalance(address, L2_PLASMA_TOKEN_ADDRESS);
 
+      // Get Nonce from PlasmaChain contract
+      const nonce = await l2Client.readContract({
+        address: L2_PLASMA_CHAIN_ADDRESS,
+        abi: plasmaChainAbi,
+        functionName: 'nonces',
+        args: [address],
+      }) as bigint;
+
       // Print results
       const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
+      const fmtEth = parseFloat(ethBalance).toFixed(4);
+      const fmtToken = parseFloat(tokenBalance).toFixed(4);
       console.log(
-        `${shortAddr.padEnd(45)}${ethBalance.padEnd(20)}${tokenBalance}`
+        `${shortAddr.padEnd(45)}${fmtEth.padEnd(15)}${fmtToken.padEnd(20)}${nonce}`
       );
     } catch (error: any) {
       console.error(`❌ Error checking ${address}:`, error.message);
     }
   }
 
-  console.log('━'.repeat(80));
+  console.log('━'.repeat(90));
   console.log('\n✅ Balance check complete!');
 }
 
