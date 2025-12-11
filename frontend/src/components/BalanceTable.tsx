@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useReadContracts, usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { formatEther, type Address } from 'viem'
@@ -7,10 +7,30 @@ import PlasmaChainABI from '../abis/PlasmaChain.json'
 import PlasmaTokenABI from '../abis/PlasmaToken.json'
 import { RefreshCw, Layers, Database, Loader2 } from 'lucide-react'
 
-// Environment variables
-const L2_PLASMA_CHAIN_ADDRESS = import.meta.env.VITE_L2_PLASMA_CHAIN_ADDRESS as Address || '0xA9639c9bA80dcF06e858C6495a72e4661C059Fe3'
-const L2_PLASMA_TOKEN_ADDRESS = import.meta.env.VITE_L2_PLASMA_TOKEN_ADDRESS as Address || '0x17A7428596776A82b9E2D11fd7c523e8e1BA92B1'
-const PLASMA_TOKEN_ADDRESS = import.meta.env.VITE_PLASMA_TOKEN_ADDRESS as Address || '0x76eab394dbc12e34fa6418587bc7d7f9e339117c'
+// Backend API URL
+const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:3001'
+
+// Fetch config from backend
+async function getContractAddresses() {
+  try {
+    const response = await fetch(`${BACKEND_API_URL}/api/config`)
+    if (!response.ok) throw new Error('Failed to fetch config')
+    const data = await response.json()
+    return {
+      L2_PLASMA_CHAIN_ADDRESS: data.L2_PLASMA_CHAIN_ADDRESS as Address,
+      L2_PLASMA_TOKEN_ADDRESS: data.L2_PLASMA_TOKEN_ADDRESS as Address,
+      PLASMA_TOKEN_ADDRESS: data.PLASMA_TOKEN_ADDRESS as Address,
+    }
+  } catch (err) {
+    console.error('Error fetching config:', err)
+    // Fallback to .env vars or defaults
+    return {
+      L2_PLASMA_CHAIN_ADDRESS: (import.meta.env.VITE_L2_PLASMA_CHAIN_ADDRESS || '0x2E983A1Ba5e8b38AAAeC4B440B9dDcFBf72E15d1') as Address,
+      L2_PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_L2_PLASMA_TOKEN_ADDRESS || '0x663F3ad617193148711d28f5334eE4Ed07016602') as Address,
+      PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_PLASMA_TOKEN_ADDRESS || '0x89decaece5440a11bd8084717ec1bd8723d4b62e') as Address,
+    }
+  }
+}
 
 interface BalanceTableProps {
   addresses: Address[]
@@ -18,8 +38,19 @@ interface BalanceTableProps {
 
 export function BalanceTable({ addresses }: BalanceTableProps) {
   const [showL1, setShowL1] = useState(false)
+  const [contractAddresses, setContractAddresses] = useState<{
+    L2_PLASMA_CHAIN_ADDRESS: Address
+    L2_PLASMA_TOKEN_ADDRESS: Address
+    PLASMA_TOKEN_ADDRESS: Address
+  } | null>(null)
+  
   const l2Client = usePublicClient({ chainId: 31337 })
   const l1Client = usePublicClient({ chainId: 11155111 }) // Sepolia
+
+  // Load contract addresses from backend on mount
+  useEffect(() => {
+    getContractAddresses().then(setContractAddresses)
+  }, [])
 
   // 1. Fetch L2 Native ETH Balances (Native)
   const { data: l2EthBalances, refetch: refetchL2Eth } = useQuery({
@@ -33,22 +64,22 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
 
   // 2. Fetch L2 Token & Nonce (Contract)
   const { data: l2ContractData, refetch: refetchL2Contract } = useReadContracts({
-    contracts: addresses.flatMap(address => [
+    contracts: contractAddresses ? addresses.flatMap(address => [
       {
-        address: L2_PLASMA_CHAIN_ADDRESS,
+        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS,
         abi: PlasmaChainABI.abi as any,
         functionName: 'getBalance',
-        args: [address, L2_PLASMA_TOKEN_ADDRESS],
+        args: [address, contractAddresses.L2_PLASMA_TOKEN_ADDRESS],
         chainId: 31337,
       },
       {
-        address: L2_PLASMA_CHAIN_ADDRESS,
+        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS,
         abi: PlasmaChainABI.abi as any,
         functionName: 'nonces',
         args: [address],
         chainId: 31337,
       },
-    ]),
+    ]) : [],
     query: {
       refetchInterval: 2000,
     }
@@ -56,18 +87,18 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
 
   // 3. Fetch L1 Balances (On Demand)
   const { data: l1Balances, isFetching: isLoadingL1, refetch: fetchL1 } = useQuery({
-    queryKey: ['l1-balances', addresses],
+    queryKey: ['l1-balances', addresses, contractAddresses],
     queryFn: async () => {
-      if (!l1Client) return null
+      if (!l1Client || !contractAddresses) return null
       console.log('Fetching L1 balances...')
       return Promise.all(addresses.map(async (addr) => {
         const eth = await l1Client.getBalance({ address: addr })
         let token = 0n
         try {
             // Only fetch token if address is valid
-            if (PLASMA_TOKEN_ADDRESS !== '0x0000000000000000000000000000000000000000') {
+            if (contractAddresses.PLASMA_TOKEN_ADDRESS !== '0x0000000000000000000000000000000000000000') {
                  token = await l1Client.readContract({
-                    address: PLASMA_TOKEN_ADDRESS,
+                    address: contractAddresses.PLASMA_TOKEN_ADDRESS,
                     abi: PlasmaTokenABI.abi as any,
                     functionName: 'balanceOf',
                     args: [addr]

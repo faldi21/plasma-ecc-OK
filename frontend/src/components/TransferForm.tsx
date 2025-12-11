@@ -2,12 +2,9 @@ import { useState, useEffect } from 'react'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useChainId, useSwitchChain } from 'wagmi'
 import { parseEther, formatEther, type Address } from 'viem'
 import { cn } from '../utils'
+import { getContractConfig } from '../utils/config'
 import PlasmaChainABI from '../abis/PlasmaChain.json'
 import { Send, Loader2, CheckCircle, AlertCircle, Wallet, Network, Clock } from 'lucide-react'
-
-// Environment variables
-const L2_PLASMA_CHAIN_ADDRESS = import.meta.env.VITE_L2_PLASMA_CHAIN_ADDRESS as Address || '0xA9639c9bA80dcF06e858C6495a72e4661C059Fe3'
-const L2_PLASMA_TOKEN_ADDRESS = import.meta.env.VITE_L2_PLASMA_TOKEN_ADDRESS as Address || '0x17A7428596776A82b9E2D11fd7c523e8e1BA92B1'
 
 const PREDEFINED_ACCOUNTS = [
   { address: '0x62dc14Fe819A241e176ee6A813f51045d04A0cda', label: 'Account A (0x62dc...)' },
@@ -23,6 +20,7 @@ export function TransferForm() {
   const [toAddress, setToAddress] = useState<string>(PREDEFINED_ACCOUNTS[0].address)
   const [amount, setAmount] = useState('')
   const [isCustomAddress, setIsCustomAddress] = useState(false)
+  const [contractConfig, setContractConfig] = useState<any>(null)
 
   const { data: hash, isPending: isWritePending, writeContract, error: writeError } = useWriteContract()
   
@@ -30,44 +28,49 @@ export function TransferForm() {
     hash,
   })
 
+  // Load contract config on mount
+  useEffect(() => {
+    getContractConfig().then(setContractConfig)
+  }, [])
+
   // Fetch Nonce
   const { data: nonce } = useReadContract({
-    address: L2_PLASMA_CHAIN_ADDRESS,
+    address: contractConfig?.L2_PLASMA_CHAIN_ADDRESS as Address,
     abi: PlasmaChainABI.abi,
     functionName: 'nonces',
     args: connectedAddress ? [connectedAddress] : undefined,
     query: {
-        enabled: !!connectedAddress && chainId === 31337
+        enabled: !!connectedAddress && chainId === 31337 && !!contractConfig
     }
   })
   
   // Fetch Balance
   const { data: balance } = useReadContract({
-    address: L2_PLASMA_CHAIN_ADDRESS,
+    address: contractConfig?.L2_PLASMA_CHAIN_ADDRESS as Address,
     abi: PlasmaChainABI.abi,
     functionName: 'getBalance',
-    args: connectedAddress ? [connectedAddress, L2_PLASMA_TOKEN_ADDRESS] : undefined,
+    args: connectedAddress ? [connectedAddress, contractConfig?.L2_PLASMA_TOKEN_ADDRESS as Address] : undefined,
     query: {
-        enabled: !!connectedAddress && chainId === 31337
+        enabled: !!connectedAddress && chainId === 31337 && !!contractConfig
     }
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!connectedAddress || !amount || !toAddress) return
+    if (!connectedAddress || !amount || !toAddress || !contractConfig) return
 
     try {
         const parsedAmount = parseEther(amount)
         const currentNonce = nonce as bigint || 0n
 
         writeContract({
-            address: L2_PLASMA_CHAIN_ADDRESS,
+            address: contractConfig.L2_PLASMA_CHAIN_ADDRESS as Address,
             abi: PlasmaChainABI.abi,
             functionName: 'executeTransaction',
             args: [
                 connectedAddress,       // from
                 toAddress as Address,   // to
-                L2_PLASMA_TOKEN_ADDRESS,// token
+                contractConfig.L2_PLASMA_TOKEN_ADDRESS as Address,// token
                 parsedAmount,           // amount
                 currentNonce,           // nonce
                 '0x',                   // signature (empty for direct call)

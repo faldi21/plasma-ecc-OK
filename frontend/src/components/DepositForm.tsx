@@ -2,14 +2,11 @@ import { useState, useEffect } from 'react'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useChainId, useSwitchChain } from 'wagmi'
 import { parseEther, type Address, formatEther } from 'viem'
 import { cn } from '../utils'
+import { getContractConfig } from '../utils/config'
 import RootChainABI from '../abis/RootChain.json'
 import PlasmaTokenABI from '../abis/PlasmaToken.json'
 import { ArrowDownCircle, Loader2, CheckCircle, AlertCircle, Wallet, Network } from 'lucide-react'
 import { sepolia } from 'wagmi/chains'
-
-// Environment variables
-const ROOT_CHAIN_ADDRESS = import.meta.env.VITE_ROOT_CHAIN_ADDRESS as Address || '0xdc308f17d84b727351530b6c35e7454db3bfebb0'
-const PLASMA_TOKEN_ADDRESS = import.meta.env.VITE_PLASMA_TOKEN_ADDRESS as Address || '0x76eab394dbc12e34fa6418587bc7d7f9e339117c'
 
 export function DepositForm() {
   const { address: connectedAddress, isConnected } = useAccount()
@@ -18,6 +15,12 @@ export function DepositForm() {
   
   const [amount, setAmount] = useState('')
   const [step, setStep] = useState<'input' | 'approving' | 'depositing' | 'success'>('input')
+  const [contractConfig, setContractConfig] = useState<any>(null)
+
+  // Load contract config on mount
+  useEffect(() => {
+    getContractConfig().then(setContractConfig)
+  }, [])
 
   // Contract Writes
   const { data: approveHash, isPending: isApprovePending, writeContract: writeApprove, error: approveError } = useWriteContract()
@@ -34,36 +37,36 @@ export function DepositForm() {
 
   // Read Balance and Allowance
   const { data: balance } = useReadContract({
-    address: PLASMA_TOKEN_ADDRESS,
+    address: contractConfig?.PLASMA_TOKEN_ADDRESS as Address,
     abi: PlasmaTokenABI.abi,
     functionName: 'balanceOf',
     args: connectedAddress ? [connectedAddress] : undefined,
     query: {
-        enabled: !!connectedAddress && chainId === sepolia.id
+        enabled: !!connectedAddress && chainId === sepolia.id && !!contractConfig
     }
   })
 
   const { refetch: refetchAllowance } = useReadContract({
-    address: PLASMA_TOKEN_ADDRESS,
+    address: contractConfig?.PLASMA_TOKEN_ADDRESS as Address,
     abi: PlasmaTokenABI.abi,
     functionName: 'allowance',
-    args: connectedAddress ? [connectedAddress, ROOT_CHAIN_ADDRESS] : undefined,
+    args: connectedAddress ? [connectedAddress, contractConfig?.ROOT_CHAIN_ADDRESS as Address] : undefined,
     query: {
-        enabled: !!connectedAddress && chainId === sepolia.id
+        enabled: !!connectedAddress && chainId === sepolia.id && !!contractConfig
     }
   })
 
   const handleApprove = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!connectedAddress || !amount) return
+    if (!connectedAddress || !amount || !contractConfig) return
 
     try {
         const parsedAmount = parseEther(amount)
         writeApprove({
-            address: PLASMA_TOKEN_ADDRESS,
+            address: contractConfig.PLASMA_TOKEN_ADDRESS as Address,
             abi: PlasmaTokenABI.abi,
             functionName: 'approve',
-            args: [ROOT_CHAIN_ADDRESS, parsedAmount],
+            args: [contractConfig.ROOT_CHAIN_ADDRESS as Address, parsedAmount],
             chainId: sepolia.id,
         })
         setStep('approving')
@@ -73,15 +76,15 @@ export function DepositForm() {
   }
 
   const handleDeposit = () => {
-    if (!connectedAddress || !amount) return
+    if (!connectedAddress || !amount || !contractConfig) return
 
     try {
         const parsedAmount = parseEther(amount)
         writeDeposit({
-            address: ROOT_CHAIN_ADDRESS,
+            address: contractConfig.ROOT_CHAIN_ADDRESS as Address,
             abi: RootChainABI.abi,
             functionName: 'deposit',
-            args: [PLASMA_TOKEN_ADDRESS, parsedAmount],
+            args: [contractConfig.PLASMA_TOKEN_ADDRESS as Address, parsedAmount],
             chainId: sepolia.id,
         })
         setStep('depositing')

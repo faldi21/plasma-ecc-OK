@@ -17,6 +17,15 @@ app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'plasma-l2-backend' });
 });
 
+// Config endpoint - expose contract addresses
+app.get('/api/config', (req: Request, res: Response) => {
+  res.json({
+    L2_PLASMA_CHAIN_ADDRESS: envConfig.L2_PLASMA_CHAIN_ADDRESS,
+    L2_PLASMA_TOKEN_ADDRESS: envConfig.L2_PLASMA_TOKEN_ADDRESS,
+    PLASMA_TOKEN_ADDRESS: envConfig.PLASMA_TOKEN_ADDRESS,
+  });
+});
+
 // Deposit endpoint
 app.post('/api/deposit', async (req: Request, res: Response) => {
   try {
