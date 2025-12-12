@@ -98,7 +98,23 @@ export function TransferForm() {
     )
   }
 
+  if (!contractConfig) {
+    return (
+        <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
+            <Loader2 className="w-12 h-12 text-gray-500 animate-spin" />
+            <h3 className="text-xl font-semibold">Loading Configuration</h3>
+            <p className="text-gray-400">Fetching contract addresses from backend...</p>
+        </div>
+    )
+  }
+
   const isWrongNetwork = chainId !== 31337
+  
+  // Calculate if amount exceeds balance
+  const balanceBigInt = balance as bigint || 0n
+  const amountBigInt = amount ? parseEther(amount) : 0n
+  const isInsufficientBalance = amountBigInt > balanceBigInt && amount !== ''
+  const maxBalance = balance ? formatEther(balance as bigint) : '0'
 
   return (
     <div className="w-full max-w-md mx-auto">
@@ -170,18 +186,40 @@ export function TransferForm() {
                         type="number" 
                         step="0.0001"
                         placeholder="0.00" 
-                        className="w-full p-3 rounded-lg bg-black/50 border border-white/10 text-lg font-mono focus:outline-none focus:border-green-500/50 transition-colors"
+                        className={cn(
+                          "w-full p-3 pr-20 rounded-lg bg-black/50 border text-lg font-mono focus:outline-none transition-colors",
+                          isInsufficientBalance 
+                            ? "border-red-500/50 focus:border-red-500" 
+                            : "border-white/10 focus:border-green-500/50"
+                        )}
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
                     />
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-500">
-                        PLASMA
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setAmount(maxBalance)}
+                            className="text-xs font-medium text-green-400 hover:text-green-300 transition-colors px-2 py-1 rounded hover:bg-green-500/10"
+                        >
+                            MAX
+                        </button>
+                        <span className="text-sm font-medium text-gray-500">
+                            PLASMA
+                        </span>
                     </div>
                 </div>
-                <p className="text-xs text-gray-500 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    Estimated time: Instant (~2s)
-                </p>
+                {isInsufficientBalance && (
+                    <p className="text-xs text-red-400 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        Insufficient balance. Maximum: {maxBalance} PLASMA
+                    </p>
+                )}
+                {!isInsufficientBalance && (
+                    <p className="text-xs text-gray-500 flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        Estimated time: Instant (~2s)
+                    </p>
+                )}
             </div>
         </div>
 
@@ -221,8 +259,8 @@ export function TransferForm() {
             </button>
         ) : (
             <button 
-                type="submit" 
-                disabled={isWritePending || isConfirming || !amount || !toAddress}
+                type="submit"
+                disabled={!contractConfig || isWritePending || isConfirming || !amount || !toAddress || isInsufficientBalance}
                 className="w-full py-3 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2"
             >
                 {isWritePending || isConfirming ? (

@@ -23,6 +23,7 @@ app.get('/api/config', (req: Request, res: Response) => {
     L2_PLASMA_CHAIN_ADDRESS: envConfig.L2_PLASMA_CHAIN_ADDRESS,
     L2_PLASMA_TOKEN_ADDRESS: envConfig.L2_PLASMA_TOKEN_ADDRESS,
     PLASMA_TOKEN_ADDRESS: envConfig.PLASMA_TOKEN_ADDRESS,
+    ROOT_CHAIN_ADDRESS: envConfig.ROOT_CHAIN_ADDRESS,
   });
 });
 

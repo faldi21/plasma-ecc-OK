@@ -1,36 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useReadContracts, usePublicClient } from 'wagmi'
+import { useReadContracts, usePublicClient, useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { formatEther, type Address } from 'viem'
 import { cn } from '../utils'
+import { getContractConfig } from '../utils/config'
 import PlasmaChainABI from '../abis/PlasmaChain.json'
 import PlasmaTokenABI from '../abis/PlasmaToken.json'
 import { RefreshCw, Layers, Database, Loader2 } from 'lucide-react'
-
-// Backend API URL
-const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:3001'
-
-// Fetch config from backend
-async function getContractAddresses() {
-  try {
-    const response = await fetch(`${BACKEND_API_URL}/api/config`)
-    if (!response.ok) throw new Error('Failed to fetch config')
-    const data = await response.json()
-    return {
-      L2_PLASMA_CHAIN_ADDRESS: data.L2_PLASMA_CHAIN_ADDRESS as Address,
-      L2_PLASMA_TOKEN_ADDRESS: data.L2_PLASMA_TOKEN_ADDRESS as Address,
-      PLASMA_TOKEN_ADDRESS: data.PLASMA_TOKEN_ADDRESS as Address,
-    }
-  } catch (err) {
-    console.error('Error fetching config:', err)
-    // Fallback to .env vars or defaults
-    return {
-      L2_PLASMA_CHAIN_ADDRESS: (import.meta.env.VITE_L2_PLASMA_CHAIN_ADDRESS || '0x2E983A1Ba5e8b38AAAeC4B440B9dDcFBf72E15d1') as Address,
-      L2_PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_L2_PLASMA_TOKEN_ADDRESS || '0x663F3ad617193148711d28f5334eE4Ed07016602') as Address,
-      PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_PLASMA_TOKEN_ADDRESS || '0x89decaece5440a11bd8084717ec1bd8723d4b62e') as Address,
-    }
-  }
-}
 
 interface BalanceTableProps {
   addresses: Address[]
@@ -39,17 +15,18 @@ interface BalanceTableProps {
 export function BalanceTable({ addresses }: BalanceTableProps) {
   const [showL1, setShowL1] = useState(false)
   const [contractAddresses, setContractAddresses] = useState<{
-    L2_PLASMA_CHAIN_ADDRESS: Address
-    L2_PLASMA_TOKEN_ADDRESS: Address
-    PLASMA_TOKEN_ADDRESS: Address
+    L2_PLASMA_CHAIN_ADDRESS?: string
+    L2_PLASMA_TOKEN_ADDRESS?: string
+    PLASMA_TOKEN_ADDRESS?: string
   } | null>(null)
+  const { address: connectedAddress } = useAccount()
   
   const l2Client = usePublicClient({ chainId: 31337 })
   const l1Client = usePublicClient({ chainId: 11155111 }) // Sepolia
 
   // Load contract addresses from backend on mount
   useEffect(() => {
-    getContractAddresses().then(setContractAddresses)
+    getContractConfig().then(setContractAddresses)
   }, [])
 
   // 1. Fetch L2 Native ETH Balances (Native)
@@ -66,14 +43,14 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
   const { data: l2ContractData, refetch: refetchL2Contract } = useReadContracts({
     contracts: contractAddresses ? addresses.flatMap(address => [
       {
-        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS,
+        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS as Address,
         abi: PlasmaChainABI.abi as any,
         functionName: 'getBalance',
-        args: [address, contractAddresses.L2_PLASMA_TOKEN_ADDRESS],
+        args: [address, contractAddresses.L2_PLASMA_TOKEN_ADDRESS as Address],
         chainId: 31337,
       },
       {
-        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS,
+        address: contractAddresses.L2_PLASMA_CHAIN_ADDRESS as Address,
         abi: PlasmaChainABI.abi as any,
         functionName: 'nonces',
         args: [address],
@@ -98,7 +75,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
             // Only fetch token if address is valid
             if (contractAddresses.PLASMA_TOKEN_ADDRESS !== '0x0000000000000000000000000000000000000000') {
                  token = await l1Client.readContract({
-                    address: contractAddresses.PLASMA_TOKEN_ADDRESS,
+                    address: contractAddresses.PLASMA_TOKEN_ADDRESS as Address,
                     abi: PlasmaTokenABI.abi as any,
                     functionName: 'balanceOf',
                     args: [addr]
@@ -204,33 +181,51 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
                 // L1 Data
                 const l1Data = l1Balances?.[idx]
 
+                // Check if this is the connected address
+                const isConnectedAddress = connectedAddress?.toLowerCase() === address.toLowerCase()
+
                 return (
-                  <tr key={address} className="hover:bg-white/5 transition-colors group">
-                    <td className="p-4 font-mono text-sm text-gray-300 flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-xs text-gray-400 group-hover:text-white transition-colors">
-                        {idx + 1}
+                  <tr 
+                    key={address} 
+                    className={cn(
+                      "transition-colors group",
+                      isConnectedAddress 
+                        ? "bg-gradient-to-r from-blue-500/20 to-purple-500/20 hover:from-blue-500/30 hover:to-purple-500/30 border-l-2 border-blue-400" 
+                        : "hover:bg-white/5"
+                    )}
+                  >
+                    <td className={cn("p-4 font-mono text-sm flex items-center gap-2", isConnectedAddress ? "text-blue-300 font-semibold" : "text-gray-300")}>
+                      <div className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center text-xs transition-colors",
+                        isConnectedAddress 
+                          ? "bg-blue-500/40 text-blue-300" 
+                          : "bg-gradient-to-br from-blue-500/20 to-purple-500/20 text-gray-400 group-hover:text-white"
+                      )}>
+                        {isConnectedAddress && <span className="text-lg">✓</span>}
+                        {!isConnectedAddress && idx + 1}
                       </div>
                       <span className="opacity-70 group-hover:opacity-100 transition-opacity">
                         {address.slice(0, 6)}...{address.slice(-4)}
+                        {isConnectedAddress && <span className="ml-2 text-xs text-blue-400">(You)</span>}
                       </span>
                     </td>
 
-                    <td className="p-4 font-mono text-sm">
+                    <td className={cn("p-4 font-mono text-sm", isConnectedAddress && "text-blue-300 font-semibold")}>
                       {formatBalance(l2Eth)}
                     </td>
-                    <td className="p-4 font-mono text-sm">
+                    <td className={cn("p-4 font-mono text-sm", isConnectedAddress && "text-blue-300 font-semibold")}>
                       {formatBalance(l2Token)}
                     </td>
-                    <td className="p-4 font-mono text-sm text-gray-400">
+                    <td className={cn("p-4 font-mono text-sm", isConnectedAddress ? "text-blue-300 font-semibold" : "text-gray-400")}>
                       {nonce !== undefined ? nonce.toString() : '-'}
                     </td>
 
                     {showL1 && (
                       <>
-                        <td className="p-4 font-mono text-sm border-l border-white/10 text-gray-400">
+                        <td className={cn("p-4 font-mono text-sm border-l border-white/10", isConnectedAddress ? "text-blue-300 font-semibold" : "text-gray-400")}>
                           {isLoadingL1 && !l1Data ? '...' : formatBalance(l1Data?.eth)}
                         </td>
-                        <td className="p-4 font-mono text-sm text-gray-400">
+                        <td className={cn("p-4 font-mono text-sm", isConnectedAddress ? "text-blue-300 font-semibold" : "text-gray-400")}>
                           {isLoadingL1 && !l1Data ? '...' : formatBalance(l1Data?.token)}
                         </td>
                       </>

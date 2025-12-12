@@ -58,10 +58,23 @@ export function DepositForm() {
 
   const handleApprove = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!connectedAddress || !amount || !contractConfig) return
+    if (!connectedAddress || !amount || !contractConfig) {
+      console.error('Missing required fields:', { connectedAddress, amount, contractConfig })
+      return
+    }
+
+    if (!contractConfig.PLASMA_TOKEN_ADDRESS || !contractConfig.ROOT_CHAIN_ADDRESS) {
+      console.error('Missing contract addresses:', contractConfig)
+      return
+    }
 
     try {
         const parsedAmount = parseEther(amount)
+        console.log('Approving:', {
+          token: contractConfig.PLASMA_TOKEN_ADDRESS,
+          spender: contractConfig.ROOT_CHAIN_ADDRESS,
+          amount: parsedAmount.toString()
+        })
         writeApprove({
             address: contractConfig.PLASMA_TOKEN_ADDRESS as Address,
             abi: PlasmaTokenABI.abi,
@@ -114,6 +127,16 @@ export function DepositForm() {
             <Wallet className="w-12 h-12 text-gray-500" />
             <h3 className="text-xl font-semibold">Wallet Not Connected</h3>
             <p className="text-gray-400">Please connect your wallet to make deposits.</p>
+        </div>
+    )
+  }
+
+  if (!contractConfig) {
+    return (
+        <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
+            <Loader2 className="w-12 h-12 text-gray-500 animate-spin" />
+            <h3 className="text-xl font-semibold">Loading Configuration</h3>
+            <p className="text-gray-400">Fetching contract addresses from backend...</p>
         </div>
     )
   }
@@ -243,7 +266,7 @@ export function DepositForm() {
         ) : (
             <button 
                 onClick={handleApprove}
-                disabled={step !== 'input' && step !== 'success' || !amount}
+                disabled={!contractConfig || step !== 'input' && step !== 'success' || !amount}
                 className="w-full py-3 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
             >
                 {step === 'approving' || step === 'depositing' ? (

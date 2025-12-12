@@ -52,7 +52,7 @@ async function getTokens() {
 
   for (const address of testAddresses) {
     try {
-      const tx = await token.mint(address, ethers.parseEther("10000"));
+      const tx = await token.mint(address, ethers.parseEther("100000"));
       await tx.wait();
 
       const balance = await token.balanceOf(address);
