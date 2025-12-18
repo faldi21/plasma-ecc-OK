@@ -332,6 +332,22 @@ app.get('/api/accumulator/value', (req: Request, res: Response) => {
   }
 });
 
+// Get accumulator elements endpoint
+app.get('/api/accumulator/elements', (req: Request, res: Response) => {
+  try {
+    const elements = plasmaService.getAccumulatorElements();
+    const size = plasmaService.getAccumulatorSize();
+    res.json({
+      success: true,
+      elements,
+      size,
+    });
+  } catch (error: any) {
+    console.error('Get accumulator elements error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Add transaction hash to accumulator endpoint
 app.post('/api/accumulator/add', async (req: Request, res: Response) => {
   try {
@@ -356,6 +372,41 @@ app.post('/api/accumulator/add', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Add to accumulator error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Generate witness for transaction exit proof endpoint
+app.get('/api/witness/:txHash', async (req: Request, res: Response) => {
+  try {
+    const { txHash } = req.params as { txHash: Hex };
+
+    if (!txHash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: txHash',
+      });
+    }
+
+    // Ensure txHash has 0x prefix
+    const formattedTxHash = txHash.startsWith('0x') ? (txHash as Hex) : (`0x${txHash}` as Hex);
+
+    const witness = await plasmaService.generateWitness(formattedTxHash);
+
+    if (!witness) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transaction not found in accumulator',
+      });
+    }
+
+    res.json({
+      success: true,
+      txHash: formattedTxHash,
+      witness,
+    });
+  } catch (error: any) {
+    console.error('Generate witness error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

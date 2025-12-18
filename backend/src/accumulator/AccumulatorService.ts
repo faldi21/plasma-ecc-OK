@@ -49,6 +49,7 @@ export class AccumulatorService {
       }
 
       // Calculate new accumulator value: acc' = acc + element * G
+      // Note: elliptic.js mul() automatically handles modulo N internally
       const elementPoint = this.G.mul(elementBN);
       const oldAccumulator = this.accumulatorValue;
       this.accumulatorValue = this.accumulatorValue.add(elementPoint);
@@ -103,6 +104,7 @@ export class AccumulatorService {
       const elementBN = new BN(element.slice(2), 16);
 
       // Calculate element point: element * G
+      // Note: elliptic.js mul() automatically handles modulo N internally
       const elementPoint = this.G.mul(elementBN);
 
       // Reconstruct accumulator from witness: acc = witness + element * G

@@ -1,7 +1,14 @@
 // Import ABIs from JSON files
-import RootChainABI from '../../abi/RootChain.json' assert { type: 'json' };
-import PlasmaChainABI from '../../abi/PlasmaChain.json' assert { type: 'json' };
-import PlasmaTokenABI from '../../abi/PlasmaToken.json' assert { type: 'json' };
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const RootChainABI = JSON.parse(readFileSync(join(__dirname, '../../abi/RootChain.json'), 'utf-8'));
+const PlasmaChainABI = JSON.parse(readFileSync(join(__dirname, '../../abi/PlasmaChain.json'), 'utf-8'));
+const PlasmaTokenABI = JSON.parse(readFileSync(join(__dirname, '../../abi/PlasmaToken.json'), 'utf-8'));
 
 // Extract ABIs
 export const rootChainAbi = RootChainABI.abi;
