@@ -1,27 +1,27 @@
 import {
   createPublicClient,
-  createWalletClient,
   http,
   webSocket,
   type Address,
   type Hex,
   type PublicClient,
-  type WalletClient,
   type Log,
 } from 'viem';
 import { sepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { RelayConfig, DepositEvent } from './types.js';
+import type { RelayConfig, UTXODepositEvent } from './types.js';
 
-// Legacy RootChain ABI
-const rootChainAbi = [
+// UTXO RootChain ABI
+const rootChainUtxoAbi = [
   {
     type: 'event',
-    name: 'Deposit',
+    name: 'DepositCreated',
     inputs: [
+      { name: 'utxoId', type: 'bytes32', indexed: true },
       { name: 'user', type: 'address', indexed: true },
       { name: 'token', type: 'address', indexed: true },
       { name: 'amount', type: 'uint256', indexed: false },
+      { name: 'depositNonce', type: 'uint256', indexed: false },
     ],
   },
   {
@@ -33,25 +33,23 @@ const rootChainAbi = [
         name: 'accumulatorValue',
         type: 'tuple',
         components: [
-          { name: 'x', type: 'bytes32' },
-          { name: 'y', type: 'bytes32' },
+          { name: 'x', type: 'uint256' },
+          { name: 'y', type: 'uint256' },
         ],
       },
       { name: 'transactionCount', type: 'uint256' },
-      { name: 'txHashes', type: 'bytes32[]' },
     ],
     outputs: [],
   },
 ] as const;
 
 /**
- * L1 Monitor
- * Monitors L1 (Sepolia) for Deposit events
+ * L1 Monitor UTXO
+ * Monitors L1 (Sepolia) for DepositCreated events (UTXO model)
  */
-export class L1Monitor {
+export class L1MonitorUTXO {
   private readonly config: RelayConfig;
   private readonly publicClient: PublicClient;
-  private readonly walletClient: WalletClient;
   private readonly account: ReturnType<typeof privateKeyToAccount>;
   private isMonitoring = false;
   private unwatch?: () => void;
@@ -79,33 +77,28 @@ export class L1Monitor {
       transport,
     });
 
-    this.walletClient = createWalletClient({
-      account: this.account,
-      chain: sepolia,
-      transport: http(config.sepoliaRpcUrl),
-    });
-
-    console.log('[L1 Monitor] Initialized');
-    console.log(`[L1 Monitor] Operator: ${this.account.address}`);
+    console.log('[L1 Monitor UTXO] Initialized');
+    console.log(`[L1 Monitor UTXO] RootChainUTXO: ${config.rootChainAddress}`);
+    console.log(`[L1 Monitor UTXO] Operator: ${this.account.address}`);
     console.log(
-      `[L1 Monitor] Transport: ${config.sepoliaWssUrl ? 'WebSocket' : 'HTTP'}`
+      `[L1 Monitor UTXO] Transport: ${config.sepoliaWssUrl ? 'WebSocket' : 'HTTP'}`
     );
   }
 
   /**
-   * Start monitoring L1 for Deposit events
+   * Start monitoring L1 for DepositCreated events
    */
   public async startMonitoring(
     fromBlock: bigint,
-    onDeposit: (deposit: DepositEvent) => void | Promise<void>
+    onDeposit: (deposit: UTXODepositEvent) => void | Promise<void>
   ): Promise<void> {
     if (this.isMonitoring) {
-      console.log('[L1 Monitor] Already monitoring');
+      console.log('[L1 Monitor UTXO] Already monitoring');
       return;
     }
 
     this.isMonitoring = true;
-    console.log(`[L1 Monitor] Starting from block ${fromBlock}`);
+    console.log(`[L1 Monitor UTXO] Starting from block ${fromBlock}`);
 
     try {
       // If WebSocket is available, use event watching
@@ -116,7 +109,7 @@ export class L1Monitor {
         await this.pollWithHttp(fromBlock, onDeposit);
       }
     } catch (error: any) {
-      console.error('[L1 Monitor] Error in monitoring:', error.message);
+      console.error('[L1 Monitor UTXO] Error in monitoring:', error.message);
       this.isMonitoring = false;
       throw error;
     }
@@ -127,47 +120,46 @@ export class L1Monitor {
    */
   private async watchWithWebSocket(
     fromBlock: bigint,
-    onDeposit: (deposit: DepositEvent) => void | Promise<void>
+    onDeposit: (deposit: UTXODepositEvent) => void | Promise<void>
   ): Promise<void> {
-    console.log('[L1 Monitor] Using WebSocket event watching');
+    console.log('[L1 Monitor UTXO] Using WebSocket event watching');
 
     // Get historical events first
     const historicalLogs = await this.publicClient.getLogs({
       address: this.config.rootChainAddress,
-      event: rootChainAbi[0], // Deposit event
+      event: rootChainUtxoAbi[0], // DepositCreated event
       fromBlock,
       toBlock: 'latest',
     });
 
     console.log(
-      `[L1 Monitor] Found ${historicalLogs.length} historical deposits`
+      `[L1 Monitor UTXO] Found ${historicalLogs.length} historical UTXO deposits`
     );
 
     // Process historical events
     for (const log of historicalLogs) {
-      const deposit = this.parseDepositLog(log);
+      const deposit = this.parseDepositCreatedLog(log);
       await onDeposit(deposit);
     }
 
     // Watch for new events
     this.unwatch = this.publicClient.watchContractEvent({
       address: this.config.rootChainAddress,
-      abi: rootChainAbi,
-      eventName: 'Deposit',
+      abi: rootChainUtxoAbi,
+      eventName: 'DepositCreated',
       onLogs: async (logs) => {
-        console.log(`[L1 Monitor] Received ${logs.length} new deposit(s)`);
+        console.log(`[L1 Monitor UTXO] Received ${logs.length} new UTXO deposit(s)`);
         for (const log of logs) {
-          const deposit = this.parseDepositLog(log);
+          const deposit = this.parseDepositCreatedLog(log);
           await onDeposit(deposit);
         }
       },
       onError: (error) => {
-        console.error('[L1 Monitor] WebSocket error:', error.message);
-        // Will auto-reconnect due to reconnect config
+        console.error('[L1 Monitor UTXO] WebSocket error:', error.message);
       },
     });
 
-    console.log('[L1 Monitor] ✅ WebSocket watching active');
+    console.log('[L1 Monitor UTXO] WebSocket watching active');
   }
 
   /**
@@ -175,9 +167,9 @@ export class L1Monitor {
    */
   private async pollWithHttp(
     fromBlock: bigint,
-    onDeposit: (deposit: DepositEvent) => void | Promise<void>
+    onDeposit: (deposit: UTXODepositEvent) => void | Promise<void>
   ): Promise<void> {
-    console.log('[L1 Monitor] Using HTTP polling (every 30 seconds)');
+    console.log('[L1 Monitor UTXO] Using HTTP polling (every 30 seconds)');
 
     let currentBlock = fromBlock;
     const pollInterval = 30000; // 30 seconds
@@ -191,18 +183,18 @@ export class L1Monitor {
         if (latestBlock > currentBlock) {
           const logs = await this.publicClient.getLogs({
             address: this.config.rootChainAddress,
-            event: rootChainAbi[0], // Deposit event
+            event: rootChainUtxoAbi[0], // DepositCreated event
             fromBlock: currentBlock + 1n,
             toBlock: latestBlock,
           });
 
           if (logs.length > 0) {
             console.log(
-              `[L1 Monitor] Found ${logs.length} new deposit(s) from block ${currentBlock + 1n} to ${latestBlock}`
+              `[L1 Monitor UTXO] Found ${logs.length} new UTXO deposit(s) from block ${currentBlock + 1n} to ${latestBlock}`
             );
 
             for (const log of logs) {
-              const deposit = this.parseDepositLog(log);
+              const deposit = this.parseDepositCreatedLog(log);
               await onDeposit(deposit);
             }
           }
@@ -210,7 +202,7 @@ export class L1Monitor {
           currentBlock = latestBlock;
         }
       } catch (error: any) {
-        console.error('[L1 Monitor] Polling error:', error.message);
+        console.error('[L1 Monitor UTXO] Polling error:', error.message);
       }
 
       // Schedule next poll
@@ -219,59 +211,25 @@ export class L1Monitor {
 
     // Start polling
     await poll();
-    console.log('[L1 Monitor] ✅ HTTP polling active');
+    console.log('[L1 Monitor UTXO] HTTP polling active');
   }
 
   /**
-   * Parse Deposit event log
+   * Parse DepositCreated event log
    */
-  private parseDepositLog(log: Log): DepositEvent {
+  private parseDepositCreatedLog(log: Log): UTXODepositEvent {
     const { args, blockNumber, transactionHash, logIndex } = log as any;
 
     return {
+      utxoId: args.utxoId as Hex,
       user: args.user as Address,
       token: args.token as Address,
       amount: args.amount as bigint,
+      depositNonce: args.depositNonce as bigint,
       blockNumber: blockNumber as bigint,
       transactionHash: transactionHash as Hex,
       logIndex: logIndex as number,
     };
-  }
-
-  /**
-   * Submit block to L1 RootChain
-   */
-  public async submitBlock(
-    blockNumber: number,
-    transactionCount: number,
-    txHashes: Hex[],
-    accumulatorValue: { x: Hex; y: Hex }
-  ): Promise<Hex> {
-    console.log(`[L1 Monitor] Submitting block ${blockNumber} to L1`);
-    console.log(`  Transactions: ${transactionCount}`);
-    console.log(`  Accumulator X: ${accumulatorValue.x.slice(0, 10)}...`);
-    console.log(`  Accumulator Y: ${accumulatorValue.y.slice(0, 10)}...`);
-
-    try {
-      const hash = await this.walletClient.writeContract({
-        address: this.config.rootChainAddress,
-        abi: rootChainAbi,
-        functionName: 'submitBlock',
-        args: [
-          accumulatorValue,
-          BigInt(transactionCount),
-          txHashes,
-        ],
-      } as any);
-
-      await this.publicClient.waitForTransactionReceipt({ hash });
-
-      console.log(`  ✅ L1 submitBlock tx: ${hash}`);
-      return hash;
-    } catch (error: any) {
-      console.error(`  ❌ SubmitBlock failed:`, error.message);
-      throw error;
-    }
   }
 
   /**
@@ -280,7 +238,7 @@ export class L1Monitor {
   public stopMonitoring(): void {
     if (!this.isMonitoring) return;
 
-    console.log('[L1 Monitor] Stopping monitoring');
+    console.log('[L1 Monitor UTXO] Stopping monitoring');
     this.isMonitoring = false;
 
     if (this.unwatch) {
@@ -304,4 +262,4 @@ export class L1Monitor {
   }
 }
 
-export default L1Monitor;
+export default L1MonitorUTXO;

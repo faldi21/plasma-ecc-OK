@@ -24,17 +24,24 @@ function getEnvVar(key: string, required = true): string {
  * Load and validate relay configuration from environment variables
  */
 export function loadConfig(): RelayConfig {
+  // Check if UTXO mode is enabled
+  const useUtxo = !!getEnvVar('ROOT_CHAIN_UTXO_ADDRESS', false);
+
   return {
     // L1 (Sepolia)
     sepoliaRpcUrl: getEnvVar('SEPOLIA_RPC_URL'),
     sepoliaWssUrl: getEnvVar('SEPOLIA_WSS_URL', false),
-    rootChainAddress: getEnvVar('ROOT_CHAIN_ADDRESS') as Address,
+    rootChainAddress: useUtxo
+      ? getEnvVar('ROOT_CHAIN_UTXO_ADDRESS') as Address
+      : getEnvVar('ROOT_CHAIN_ADDRESS') as Address,
     plasmaTokenAddress: getEnvVar('PLASMA_TOKEN_ADDRESS') as Address,
     operatorPrivateKey: getEnvVar('OPERATOR_PRIVATE_KEY') as Hex,
 
     // L2 (Local)
     l2RpcUrl: getEnvVar('L2_RPC_URL', false) || 'http://localhost:8545',
-    l2PlasmaChainAddress: getEnvVar('L2_PLASMA_CHAIN_ADDRESS') as Address,
+    l2PlasmaChainAddress: useUtxo
+      ? getEnvVar('PLASMA_CHAIN_UTXO_ADDRESS') as Address
+      : getEnvVar('L2_PLASMA_CHAIN_ADDRESS') as Address,
     l2PlasmaTokenAddress: getEnvVar('L2_PLASMA_TOKEN_ADDRESS') as Address,
     l2OperatorPrivateKey: getEnvVar('L2_OPERATOR_PRIVATE_KEY') as Hex,
 
@@ -45,6 +52,9 @@ export function loadConfig(): RelayConfig {
 
     // Optional
     l2ApiUrl: getEnvVar('L2_API_URL', false) || 'http://localhost:3001',
+
+    // UTXO mode
+    useUtxoMode: useUtxo,
   };
 }
 
@@ -56,6 +66,7 @@ export function printConfig(config: RelayConfig): void {
   console.log('================================================');
   console.log('Function: Monitor L1 Deposits → Relay to L2 → Submit to L1');
   console.log('================================================');
+  console.log('Mode:                   ', config.useUtxoMode ? 'UTXO' : 'Legacy');
   console.log('L1 Network:              Sepolia Testnet');
   console.log('L1 RootChain:           ', config.rootChainAddress);
   console.log('L1 PlasmaToken:         ', config.plasmaTokenAddress);

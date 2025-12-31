@@ -1,5 +1,5 @@
 // Import ABIs from JSON files
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -10,10 +10,25 @@ const RootChainABI = JSON.parse(readFileSync(join(__dirname, '../../abi/RootChai
 const PlasmaChainABI = JSON.parse(readFileSync(join(__dirname, '../../abi/PlasmaChain.json'), 'utf-8'));
 const PlasmaTokenABI = JSON.parse(readFileSync(join(__dirname, '../../abi/PlasmaToken.json'), 'utf-8'));
 
+// UTXO ABIs (new contracts)
+const rootChainUtxoPath = join(__dirname, '../../abi/RootChainUTXO.json');
+const plasmaChainUtxoPath = join(__dirname, '../../abi/PlasmaChainUTXO.json');
+
+const RootChainUTXOABI = existsSync(rootChainUtxoPath)
+  ? JSON.parse(readFileSync(rootChainUtxoPath, 'utf-8'))
+  : null;
+const PlasmaChainUTXOABI = existsSync(plasmaChainUtxoPath)
+  ? JSON.parse(readFileSync(plasmaChainUtxoPath, 'utf-8'))
+  : null;
+
 // Extract ABIs
 export const rootChainAbi = RootChainABI.abi;
 export const plasmaChainAbi = PlasmaChainABI.abi;
 export const plasmaTokenAbi = PlasmaTokenABI.abi;
+
+// UTXO ABIs
+export const rootChainUtxoAbi = RootChainUTXOABI?.abi || [];
+export const plasmaChainUtxoAbi = PlasmaChainUTXOABI?.abi || [];
 
 // ERC20 minimal ABI for Transfer events
 export const erc20Abi = [
@@ -61,4 +76,6 @@ export default {
   plasmaChainAbi,
   plasmaTokenAbi,
   erc20Abi,
+  rootChainUtxoAbi,
+  plasmaChainUtxoAbi,
 };
