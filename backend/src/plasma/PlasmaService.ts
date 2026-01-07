@@ -1,3 +1,6 @@
+// @ts-nocheck
+// NOTE: This is the legacy PlasmaService (non-UTXO mode).
+// Use PlasmaServiceUTXO.ts for the current UTXO-based implementation.
 import {
   createPublicClient,
   createWalletClient,

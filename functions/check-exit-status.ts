@@ -13,12 +13,12 @@ const publicClient = createPublicClient({
   transport: http(process.env.SEPOLIA_RPC_URL),
 });
 
-const account = privateKeyToAccount(process.env.PK_USER_A as `0x${string}`);
+const account = privateKeyToAccount(process.env.PK_USER_C as `0x${string}`);
 
 async function checkExitStatus() {
   console.log('=== CHECK EXIT STATUS ===\n');
 
-  const rootChainAddress = process.env.ROOT_CHAIN_ADDRESS as `0x${string}`;
+  const rootChainAddress = process.env.ROOT_CHAIN_UTXO_ADDRESS as `0x${string}`;
   const userAddress = account.address;
   const token = process.env.PLASMA_TOKEN_ADDRESS as `0x${string}`;
 

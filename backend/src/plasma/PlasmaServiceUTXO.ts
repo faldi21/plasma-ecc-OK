@@ -9,6 +9,8 @@ import {
   type WalletClient,
   parseEther,
   formatEther,
+  decodeAbiParameters,
+  getEventSelector,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
@@ -98,6 +100,12 @@ export class PlasmaServiceUTXO {
     avgTxPerBlock: 0,
   };
 
+  // Submitted block tracking (for witness block lookup)
+  private submittedBlocks: Array<{
+    blockNumber: number;
+    transactions: Array<{ utxoId: Hex; outputUtxoIds?: Hex[] }>;
+  }> = [];
+
   constructor() {
     console.log('Initializing Plasma Service UTXO...');
 
@@ -142,6 +150,9 @@ export class PlasmaServiceUTXO {
     // Start L1 event monitoring
     this.startL1EventMonitoring();
 
+    // Start L2 event monitoring
+    this.startL2EventMonitoring();
+
     // Start auto block submission timer
     this.startAutoBlockSubmission();
 
@@ -179,6 +190,76 @@ export class PlasmaServiceUTXO {
       console.log('L1 UTXO event monitoring started');
     } catch (error: any) {
       console.error('Error starting L1 monitoring:', error.message);
+    }
+  }
+
+  /**
+   * Start monitoring L2 for UTXO-related events
+   * Keeps backend accumulator and pending transactions in sync even for direct L2 calls.
+   */
+  private startL2EventMonitoring(): void {
+    console.log('Starting L2 UTXO event monitoring...');
+
+    try {
+      this.l2PublicClient.watchContractEvent({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        eventName: 'UtxoCreated',
+        onLogs: async (logs) => {
+          for (const log of logs) {
+            try {
+              const { utxoId, owner, amount } = log.args as {
+                utxoId: Hex;
+                owner: Address;
+                amount: bigint;
+              };
+
+              if (!utxoId) continue;
+
+              await this.addPendingTransaction({
+                utxoId,
+                type: 'TRANSFER',
+                user: owner,
+                amount,
+              });
+            } catch (error: any) {
+              console.error('Error processing L2 UtxoCreated:', error.message);
+            }
+          }
+        },
+      });
+
+      this.l2PublicClient.watchContractEvent({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        eventName: 'WithdrawalRequested',
+        onLogs: async (logs) => {
+          for (const log of logs) {
+            try {
+              const { withdrawalTxHash, user, amount } = log.args as {
+                withdrawalTxHash: Hex;
+                user: Address;
+                amount: bigint;
+              };
+
+              if (!withdrawalTxHash) continue;
+
+              await this.addPendingTransaction({
+                utxoId: withdrawalTxHash,
+                type: 'SPEND',
+                user,
+                amount,
+              });
+            } catch (error: any) {
+              console.error('Error processing L2 WithdrawalRequested:', error.message);
+            }
+          }
+        },
+      });
+
+      console.log('L2 UTXO event monitoring started');
+    } catch (error: any) {
+      console.error('Error starting L2 monitoring:', error.message);
     }
   }
 
@@ -245,8 +326,15 @@ export class PlasmaServiceUTXO {
     user?: Address;
     amount?: bigint;
   }): Promise<void> {
+    const normalizedId = tx.utxoId.toLowerCase() as Hex;
+    if (this.processedUtxoIds.has(normalizedId)) {
+      return;
+    }
+
+    this.processedUtxoIds.add(normalizedId);
     this.pendingTransactions.push({
       ...tx,
+      utxoId: normalizedId,
       timestamp: Date.now(),
     });
 
@@ -336,6 +424,12 @@ export class PlasmaServiceUTXO {
       this.stats.lastBlockTxCount = txCount;
       this.stats.avgTxPerBlock = this.stats.totalTransactions / this.stats.totalBlocks;
 
+      // Track submitted block for witness lookups
+      this.submittedBlocks.push({
+        blockNumber: Number(blockNumber),
+        transactions: txsToSubmit.map((tx) => ({ utxoId: tx.utxoId })),
+      });
+
       console.log(`[Auto Block] Block ${blockNumber} submitted successfully!`);
       console.log(`  TX Hash: ${hash}`);
       console.log(`  Transactions: ${txCount}`);
@@ -416,6 +510,271 @@ export class PlasmaServiceUTXO {
     } catch (error: any) {
       console.error('Create L2 deposit UTXO error:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Aggregate user UTXOs for withdrawal (operator-only on L2)
+   */
+  public async aggregateForWithdrawal(
+    user: Address,
+    token: Address,
+    withdrawAmount: bigint,
+    signature: Hex
+  ): Promise<{ txHash: Hash; exitUtxoId: Hex; changeAmount: bigint }> {
+    try {
+      console.log(`[Aggregate] Aggregating for ${user}, amount: ${formatEther(withdrawAmount)}`);
+
+      const hash = await this.l2WalletClient.writeContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'aggregateForWithdrawal',
+        args: [user, token, withdrawAmount, signature],
+      } as any);
+
+      const receipt = await this.l2PublicClient.waitForTransactionReceipt({ hash });
+      console.log(`[Aggregate] Transaction confirmed: ${hash}`);
+
+      let exitUtxoId: Hex | null = null;
+      let changeAmount = 0n;
+
+      const aggregateEventSelector = getEventSelector(
+        'AggregatedWithdrawalCreated(bytes32,address,address,uint256,uint256,bytes32[])'
+      );
+
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== envConfig.PLASMA_CHAIN_UTXO_ADDRESS!.toLowerCase()) {
+          continue;
+        }
+
+        if (log.topics?.[0] !== aggregateEventSelector) {
+          continue;
+        }
+
+        // topics[1] is exitUtxoId (indexed)
+        exitUtxoId = log.topics[1] as Hex;
+
+        if (log.data && log.data !== '0x') {
+          try {
+            const decoded = decodeAbiParameters(
+              [
+                { name: 'withdrawAmount', type: 'uint256' },
+                { name: 'changeAmount', type: 'uint256' },
+                { name: 'inputUtxoIds', type: 'bytes32[]' },
+              ],
+              log.data
+            );
+            changeAmount = decoded[1] as bigint;
+          } catch {
+            // Ignore decode errors, exitUtxoId is enough
+          }
+        }
+        break;
+      }
+
+      if (!exitUtxoId) {
+        throw new Error('Failed to parse Exit UTXO ID from aggregate event');
+      }
+
+      return { txHash: hash, exitUtxoId, changeAmount };
+    } catch (error: any) {
+      console.error('[Aggregate] Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Create L2 block (operator-only)
+   */
+  public async createL2Block(): Promise<{ txHash: Hash; currentBlock: bigint }> {
+    try {
+      const hash = await this.l2WalletClient.writeContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'createBlock',
+        args: [],
+      } as any);
+
+      await this.l2PublicClient.waitForTransactionReceipt({ hash });
+
+      const currentBlock = (await this.l2PublicClient.readContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'currentBlock',
+      } as any)) as bigint;
+
+      return { txHash: hash, currentBlock };
+    } catch (error: any) {
+      console.error('[CreateBlock] Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Register Exit UTXO on L1 (operator-only)
+   */
+  public async registerExitUtxo(
+    exitUtxoId: Hex,
+    user: Address,
+    token: Address,
+    amount: bigint,
+    blockNumber: bigint
+  ): Promise<Hash> {
+    try {
+      const hash = await this.l1WalletClient.writeContract({
+        address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
+        abi: rootChainUtxoAbi,
+        functionName: 'registerExitUtxo',
+        args: [exitUtxoId, user, token, amount, blockNumber],
+      } as any);
+
+      await this.l1PublicClient.waitForTransactionReceipt({ hash });
+      return hash;
+    } catch (error: any) {
+      console.error('[RegisterExit] Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Transfer UTXO on L2
+   * Selects UTXOs from sender, creates transfer transaction on L2
+   */
+  public async transferUtxo(
+    from: Address,
+    to: Address,
+    token: Address,
+    amount: bigint,
+    signature: Hex
+  ): Promise<{ txHash: Hash; outputUtxoIds: Hex[]; inputUtxoIds: Hex[] }> {
+    try {
+      console.log(`[Transfer] Starting transfer from ${from} to ${to}, amount: ${formatEther(amount)}`);
+
+      // Get user's unspent UTXOs from L2
+      const userUtxoIds = await this.getL2UserUtxos(from);
+      console.log(`[Transfer] Found ${userUtxoIds.length} UTXOs for user`);
+
+      // Collect UTXOs until we have enough for the transfer
+      const inputUtxoIds: Hex[] = [];
+      let totalInput = 0n;
+
+      for (const utxoId of userUtxoIds) {
+        if (totalInput >= amount) break;
+
+        // Get UTXO details from L2
+        const utxo = await this.getL2Utxo(utxoId);
+        if (utxo && !utxo.spent && utxo.token.toLowerCase() === token.toLowerCase()) {
+          inputUtxoIds.push(utxoId);
+          totalInput += utxo.amount;
+        }
+      }
+
+      if (totalInput < amount) {
+        throw new Error(`Insufficient balance. Have: ${formatEther(totalInput)}, Need: ${formatEther(amount)}`);
+      }
+
+      console.log(`[Transfer] Using ${inputUtxoIds.length} UTXOs, total: ${formatEther(totalInput)}`);
+
+      // Calculate change
+      const change = totalInput - amount;
+
+      // Build output arrays
+      const outputOwners: Address[] = [to];
+      const outputAmounts: bigint[] = [amount];
+
+      if (change > 0n) {
+        outputOwners.push(from);
+        outputAmounts.push(change);
+      }
+
+      // Execute transfer on L2 contract
+      const hash = await this.l2WalletClient.writeContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'transferUtxo',
+        args: [inputUtxoIds, outputOwners, outputAmounts, signature],
+      } as any);
+
+      const receipt = await this.l2PublicClient.waitForTransactionReceipt({ hash });
+      const succeeded = receipt.status === 'success' || receipt.status === 1n;
+      if (!succeeded) {
+        throw new Error('Transfer transaction reverted on L2');
+      }
+      console.log(`[Transfer] Transaction confirmed: ${hash}`);
+
+      // Parse logs to get output UTXO IDs
+      const outputUtxoIds: Hex[] = [];
+      for (const log of receipt.logs) {
+        // UtxoCreated event topic
+        if (log.topics[0] === '0x59dce56783317e2c8db67ecf2d03e2a49b44fb6972bbed9557631a9b96a27547') {
+          const utxoId = log.topics[1] as Hex;
+          outputUtxoIds.push(utxoId);
+
+          // Add to accumulator
+          await this.accumulator.add(utxoId);
+        }
+      }
+
+      // Add to pending transactions for block submission
+      for (const utxoId of outputUtxoIds) {
+        await this.addPendingTransaction({
+          utxoId,
+          type: 'TRANSFER',
+          user: to,
+          amount,
+        });
+      }
+
+      console.log(`[Transfer] Created ${outputUtxoIds.length} output UTXOs`);
+
+      return {
+        txHash: hash,
+        outputUtxoIds,
+        inputUtxoIds,
+      };
+    } catch (error: any) {
+      console.error('[Transfer] Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's UTXOs from L2 contract
+   */
+  private async getL2UserUtxos(user: Address): Promise<Hex[]> {
+    try {
+      const utxos = (await this.l2PublicClient.readContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'getUserUtxos',
+        args: [user],
+      } as any)) as Hex[];
+      return utxos;
+    } catch (error) {
+      console.error('Get L2 user UTXOs error:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get UTXO from L2 contract
+   */
+  private async getL2Utxo(utxoId: Hex): Promise<{ owner: Address; token: Address; amount: bigint; spent: boolean } | null> {
+    try {
+      const utxo = await this.l2PublicClient.readContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'utxos',
+        args: [utxoId],
+      } as any) as [Hex, Address, Address, bigint, bigint, boolean, Hex];
+
+      // utxos returns: utxoId, owner, token, amount, createdInBlock, spent, spentInTx
+      const [, owner, token, amount, , spent] = utxo;
+
+      return { owner, token, amount, spent };
+    } catch (error) {
+      console.error('Get L2 UTXO error:', error);
+      return null;
     }
   }
 
@@ -596,6 +955,15 @@ export class PlasmaServiceUTXO {
         functionName: 'currentPlasmaBlock',
       } as any)) as bigint;
 
+      // Track submitted block for witness lookups
+      const elements = this.accumulator.getElements();
+      const count = Math.min(transactionCount, elements.length);
+      const recent = count > 0 ? elements.slice(-count) : [];
+      this.submittedBlocks.push({
+        blockNumber: Number(blockNumber),
+        transactions: recent.map((utxoId) => ({ utxoId })),
+      });
+
       console.log(`Block ${blockNumber} submitted: ${hash}`);
 
       return {
@@ -653,6 +1021,62 @@ export class PlasmaServiceUTXO {
   }
 
   /**
+   * Generate witness for a specific L1 plasma block.
+   * Uses the accumulator value stored on L1 for that block.
+   */
+  public async generateWitnessForBlock(utxoId: Hex, blockNumber: bigint): Promise<{ x: Hex; y: Hex }> {
+    if (!this.accumulator.has(utxoId)) {
+      throw new Error('Element not found in accumulator');
+    }
+
+    const block = (await this.l1PublicClient.readContract({
+      address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
+      abi: rootChainUtxoAbi,
+      functionName: 'plasmaBlocks',
+      args: [blockNumber],
+    } as any)) as [bigint, { x: bigint; y: bigint }, bigint, Address, bigint];
+
+    const accumulatorValue = {
+      x: (`0x${block[1].x.toString(16).padStart(64, '0')}`) as Hex,
+      y: (`0x${block[1].y.toString(16).padStart(64, '0')}`) as Hex,
+    };
+
+    return this.accumulator.computeWitnessForAccumulator(utxoId, accumulatorValue);
+  }
+
+  /**
+   * Get block number where UTXO was added to accumulator
+   */
+  public async getUtxoBlockNumber(utxoId: Hex): Promise<number | null> {
+    // Check submittedBlocks for the UTXO
+    if (this.submittedBlocks.length > 0) {
+      for (const block of this.submittedBlocks) {
+        for (const tx of block.transactions) {
+          // Check if this transaction created the UTXO
+          if (tx.utxoId === utxoId || tx.outputUtxoIds?.includes(utxoId)) {
+            return block.blockNumber;
+          }
+        }
+      }
+    }
+
+    // If not found in submitted blocks, try to get from L2 contract
+    try {
+      const utxoData = await this.l2PublicClient.readContract({
+        address: envConfig.PLASMA_CHAIN_UTXO_ADDRESS!,
+        abi: plasmaChainUtxoAbi,
+        functionName: 'utxos',
+        args: [utxoId],
+      }) as [Hex, Address, Address, bigint, bigint, boolean, Hex];
+      // Returns: utxoId, owner, token, amount, createdInBlock, spent, spentInTx
+      return Number(utxoData[4]); // createdInBlock
+    } catch (error) {
+      console.warn(`Failed to get block number for UTXO ${utxoId}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Add to accumulator
    */
   public async addToAccumulator(element: Hex): Promise<boolean> {
@@ -665,6 +1089,130 @@ export class PlasmaServiceUTXO {
   public getAccumulatorElements(): Hex[] {
     return this.accumulator.getElements();
   }
+
+  // ============ PERSISTENCE METHODS ============
+
+  /**
+   * Serialize plasma state for persistence
+   */
+  public serialize(): SerializedPlasmaState {
+    return {
+      pendingTransactions: this.pendingTransactions.map((tx) => ({
+        utxoId: tx.utxoId,
+        type: tx.type,
+        timestamp: tx.timestamp,
+        user: tx.user,
+        amount: tx.amount?.toString(),
+      })),
+      processedUtxoIds: Array.from(this.processedUtxoIds),
+      stats: { ...this.stats },
+      accumulatorState: this.accumulator.serialize(),
+      submittedBlocks: this.submittedBlocks.map((block) => ({
+        blockNumber: block.blockNumber,
+        transactions: block.transactions.map((tx) => ({
+          utxoId: tx.utxoId,
+          outputUtxoIds: tx.outputUtxoIds,
+        })),
+      })),
+    };
+  }
+
+  /**
+   * Restore plasma state from serialized data
+   */
+  public restore(state: SerializedPlasmaState): boolean {
+    try {
+      console.log('[PlasmaServiceUTXO] Restoring state...');
+
+      // Restore pending transactions
+      this.pendingTransactions = state.pendingTransactions.map((tx) => ({
+        utxoId: tx.utxoId as Hex,
+        type: tx.type as 'DEPOSIT' | 'TRANSFER' | 'SPEND',
+        timestamp: tx.timestamp,
+        user: tx.user as Address | undefined,
+        amount: tx.amount ? BigInt(tx.amount) : undefined,
+      }));
+
+      // Restore processed UTXO IDs
+      this.processedUtxoIds = new Set(state.processedUtxoIds as Hex[]);
+
+      // Restore stats
+      if (state.stats) {
+        this.stats = { ...state.stats };
+      }
+
+      // Restore accumulator state
+      if (state.accumulatorState) {
+        this.accumulator.restore(state.accumulatorState);
+      }
+
+      // Restore submitted blocks
+      if (state.submittedBlocks) {
+        this.submittedBlocks = state.submittedBlocks.map((block) => ({
+          blockNumber: block.blockNumber,
+          transactions: (block.transactions || []).map((tx) => ({
+            utxoId: tx.utxoId as Hex,
+            outputUtxoIds: tx.outputUtxoIds?.map((id) => id as Hex),
+          })),
+        }));
+      }
+
+      console.log(`[PlasmaServiceUTXO] Restored:`);
+      console.log(`  - Pending transactions: ${this.pendingTransactions.length}`);
+      console.log(`  - Processed UTXOs: ${this.processedUtxoIds.size}`);
+      console.log(`  - Accumulator elements: ${this.accumulator.size()}`);
+
+      return true;
+    } catch (error) {
+      console.error('[PlasmaServiceUTXO] Error restoring state:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get accumulator for direct access (for serialization)
+   */
+  public getAccumulator(): AccumulatorService {
+    return this.accumulator;
+  }
+
+  /**
+   * Check if service has data to persist
+   */
+  public hasData(): boolean {
+    return (
+      this.pendingTransactions.length > 0 ||
+      this.submittedBlocks.length > 0 ||
+      this.processedUtxoIds.size > 0 ||
+      this.accumulator.hasData()
+    );
+  }
+}
+
+// Serialized state type for persistence
+export interface SerializedPlasmaState {
+  pendingTransactions: Array<{
+    utxoId: string;
+    type: string;
+    timestamp: number;
+    user?: string;
+    amount?: string;
+  }>;
+  submittedBlocks?: Array<{
+    blockNumber: number;
+    transactions?: Array<{
+      utxoId: string;
+      outputUtxoIds?: string[];
+    }>;
+  }>;
+  processedUtxoIds: string[];
+  stats: {
+    totalTransactions: number;
+    totalBlocks: number;
+    lastBlockTxCount: number;
+    avgTxPerBlock: number;
+  };
+  accumulatorState?: import('../accumulator/AccumulatorService.js').SerializedAccumulatorState;
 }
 
 // Export singleton instance

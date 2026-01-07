@@ -1,4 +1,3 @@
-import { http } from 'wagmi'
 import { sepolia } from 'wagmi/chains'
 import { defineChain } from 'viem'
 import { getDefaultConfig } from '@rainbow-me/rainbowkit'

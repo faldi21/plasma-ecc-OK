@@ -6,9 +6,10 @@ import { config } from './config'
 import { BalanceTable } from './components/BalanceTable'
 import { TransferForm } from './components/TransferForm'
 import { DepositForm } from './components/DepositForm'
+import { WithdrawForm } from './components/WithdrawForm'
 import { type Address } from 'viem'
 import { cn } from './utils'
-import { LayoutDashboard, Send, ArrowDownCircle } from 'lucide-react'
+import { LayoutDashboard, Send, ArrowDownCircle, ArrowUpCircle } from 'lucide-react'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 const queryClient = new QueryClient()
@@ -24,17 +25,17 @@ const TEST_ADDRESSES: Address[] = [
 ]
 
 function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit'>('balances')
+  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit' | 'withdraw'>('balances')
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center py-12">
       <div className="w-full max-w-6xl px-6 mb-8 flex items-end justify-between">
         <div>
           <h1 className="text-4xl font-bold tracking-tight mb-2">
-            Plasma <span className="text-blue-400">ECC</span> Dashboard
+            Plasma <span className="text-blue-400">ECC</span> <span className="text-yellow-400">UTXO</span>
           </h1>
           <p className="text-slate-400">
-            Real-time Layer 2 balance monitoring and state verification.
+            Layer 2 Plasma with UTXO model and ECC Accumulator
           </p>
         </div>
 
@@ -79,7 +80,19 @@ function Dashboard() {
             )}
           >
             <ArrowDownCircle className="w-4 h-4" />
-            Deposit L2
+            Deposit
+          </button>
+          <button
+            onClick={() => setActiveTab('withdraw')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'withdraw'
+                ? "bg-orange-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <ArrowUpCircle className="w-4 h-4" />
+            Withdraw
           </button>
         </div>
       </div>
@@ -88,8 +101,10 @@ function Dashboard() {
         <BalanceTable addresses={TEST_ADDRESSES} />
       ) : activeTab === 'transfer' ? (
         <TransferForm />
-      ) : (
+      ) : activeTab === 'deposit' ? (
         <DepositForm />
+      ) : (
+        <WithdrawForm />
       )}
     </div>
   )

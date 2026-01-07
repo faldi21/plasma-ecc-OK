@@ -1,9 +1,16 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import type { RelayState } from './types.js';
 
-const STATE_FILE = resolve(process.cwd(), '.relay_state.json');
+// Use persistent data directory (same as Anvil state)
+const DATA_DIR = resolve(process.cwd(), '..', 'data');
+const STATE_FILE = resolve(DATA_DIR, 'relay-state.json');
 const MAX_PROCESSED_KEYS = 2000; // Keep last 2000 processed transactions
+
+// Ensure data directory exists
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true });
+}
 
 /**
  * State Manager

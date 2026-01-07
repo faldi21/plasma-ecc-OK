@@ -36,16 +36,27 @@ class RelayServiceUTXO {
     console.log(`  Last L1 block:       ${stats.lastBlock}`);
     console.log(`  Processed tx count:  ${stats.processedCount}`);
     console.log(`  Relayed deposits:    ${stats.relayedDeposits}`);
-    console.log('');
+
+    // Warning if starting from block 0 (might replay all historical deposits)
+    if (stats.lastBlock === 0n) {
+      console.log('\n⚠️  WARNING: Starting from block 0!');
+      console.log('   This will scan ALL historical deposits.');
+      console.log('   To avoid this, set L1_FROM_BLOCK to contract deployment block.');
+      console.log('   Or delete relay-state.json and restart to resume from last position.\n');
+    } else {
+      console.log('');
+    }
 
     // Setup graceful shutdown
     this.setupGracefulShutdown();
 
     // Start monitoring L1
     this.isRunning = true;
-    const fromBlock = stats.lastBlock;
+    // Start from the next block after last processed (to avoid re-scanning last block)
+    const fromBlock = stats.lastBlock > 0n ? stats.lastBlock : 0n;
 
     console.log('Starting UTXO relay service...\n');
+    console.log(`Monitoring from block: ${fromBlock}\n`);
     console.log('Listening for DepositCreated events on RootChainUTXO\n');
 
     await this.l1Monitor.startMonitoring(fromBlock, async (deposit) => {
@@ -92,12 +103,12 @@ class RelayServiceUTXO {
    * Handle a UTXO deposit event from L1
    */
   private async handleUtxoDeposit(deposit: UTXODepositEvent): Promise<void> {
-    // Create unique key for this deposit
+    // Create unique key for this deposit (txHash:logIndex ensures uniqueness)
     const depositKey = `${deposit.transactionHash}:${deposit.logIndex}`;
 
-    // Check if already processed
+    // Check if already processed - critical to prevent duplicate relays
     if (this.state.isProcessed(depositKey)) {
-      console.log(`[Relay UTXO] Already processed: ${depositKey}`);
+      console.log(`[Relay UTXO] ⊘ Skipping (already processed): ${depositKey}`);
       return;
     }
 

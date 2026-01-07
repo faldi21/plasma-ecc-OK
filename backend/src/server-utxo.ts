@@ -1,7 +1,9 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname, resolve } from 'path';
 import { envConfig } from './config/env.js';
-import { getPlasmaServiceUTXO } from './plasma/PlasmaServiceUTXO.js';
+import { getPlasmaServiceUTXO, type SerializedPlasmaState } from './plasma/PlasmaServiceUTXO.js';
 import type { Address, Hex } from 'viem';
 
 const app = express();
@@ -11,7 +13,99 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = parseInt(envConfig.PORT || '3001', 10);
+
+// State file configuration - use root /data directory (same as Anvil and relay state)
+const STATE_DIR = resolve(process.cwd(), '..', 'data');
+const STATE_FILE = resolve(STATE_DIR, 'plasma-state.json');
+const AUTO_SAVE_INTERVAL = 30000; // 30 seconds
+
+// Ensure data directory exists
+if (!existsSync(STATE_DIR)) {
+  mkdirSync(STATE_DIR, { recursive: true });
+  console.log(`[Persistence] Created data directory: ${STATE_DIR}`);
+}
+
+// Initialize plasma service
 const plasmaService = getPlasmaServiceUTXO();
+
+// Load saved state if exists
+function loadState(): boolean {
+  try {
+    if (!existsSync(STATE_FILE)) {
+      console.log('[Persistence] No saved state found, starting fresh');
+      return false;
+    }
+
+    const data = readFileSync(STATE_FILE, 'utf-8');
+    const state = JSON.parse(data) as { version: number; savedAt: string; plasma: SerializedPlasmaState };
+
+    console.log(`[Persistence] Loading state from ${STATE_FILE}`);
+    console.log(`  - Saved at: ${state.savedAt}`);
+
+    const success = plasmaService.restore(state.plasma);
+    if (success) {
+      console.log('[Persistence] State restored successfully');
+    }
+    return success;
+  } catch (error) {
+    console.error('[Persistence] Error loading state:', error);
+    return false;
+  }
+}
+
+// Save current state
+function saveState(): boolean {
+  try {
+    if (!plasmaService.hasData()) {
+      // Don't save if no data
+      return true;
+    }
+
+    const state = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      plasma: plasmaService.serialize(),
+    };
+
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+    console.log(`[Persistence] State saved to ${STATE_FILE}`);
+    console.log(`  - Accumulator elements: ${plasmaService.getAccumulatorSize()}`);
+    return true;
+  } catch (error) {
+    console.error('[Persistence] Error saving state:', error);
+    return false;
+  }
+}
+
+// Load state on startup
+loadState();
+
+// Setup auto-save timer
+let autoSaveTimer: NodeJS.Timeout | null = null;
+
+function startAutoSave() {
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer);
+  }
+
+  autoSaveTimer = setInterval(() => {
+    if (plasmaService.hasData()) {
+      saveState();
+    }
+  }, AUTO_SAVE_INTERVAL);
+
+  console.log(`[Persistence] Auto-save enabled (interval: ${AUTO_SAVE_INTERVAL}ms)`);
+}
+
+function stopAutoSave() {
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
+// Start auto-save
+startAutoSave();
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
@@ -92,6 +186,48 @@ app.get('/api/unspent-utxos/:address', async (req: Request, res: Response) => {
     res.json({ success: true, utxos, count: utxos.length });
   } catch (error: any) {
     console.error('Get unspent UTXOs error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Transfer UTXO on L2
+app.post('/api/utxo/transfer', async (req: Request, res: Response) => {
+  try {
+    const { from, to, token, amount, nonce, signature } = req.body as {
+      from: Address;
+      to: Address;
+      token: Address;
+      amount: string;
+      nonce: number;
+      signature: Hex;
+    };
+
+    if (!from || !to || !token || !amount || !signature) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: from, to, token, amount, signature',
+      });
+    }
+
+    console.log(`[Transfer] Processing transfer from ${from} to ${to}, amount: ${amount}`);
+
+    // Execute transfer via PlasmaService
+    const result = await plasmaService.transferUtxo(
+      from,
+      to,
+      token,
+      BigInt(amount),
+      signature
+    );
+
+    res.json({
+      success: true,
+      txHash: result.txHash,
+      outputUtxoIds: result.outputUtxoIds,
+      inputUtxoIds: result.inputUtxoIds,
+    });
+  } catch (error: any) {
+    console.error('Transfer error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -198,33 +334,133 @@ app.post('/api/accumulator/add', async (req: Request, res: Response) => {
 
 // Generate witness for UTXO
 app.get('/api/witness/:utxoId', async (req: Request, res: Response) => {
-  try {
-    const { utxoId } = req.params as { utxoId: Hex };
+  const { utxoId } = req.params as { utxoId: Hex };
+  const { blockNumber: blockNumberParam } = req.query as { blockNumber?: string };
 
-    if (!utxoId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameter: utxoId',
-      });
+  if (!utxoId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameter: utxoId',
+    });
+  }
+
+  try {
+    const formattedUtxoId = utxoId.startsWith('0x') ? (utxoId as Hex) : (`0x${utxoId}` as Hex);
+
+    // Get the block number where this UTXO was added to accumulator
+    const currentBlock = await plasmaService.getCurrentBlock();
+    const requestedBlock = blockNumberParam ? BigInt(blockNumberParam) : null;
+    const resolvedBlock = requestedBlock ?? await plasmaService.getUtxoBlockNumber(formattedUtxoId);
+
+    let finalBlock = resolvedBlock ? BigInt(resolvedBlock) : currentBlock;
+    if (finalBlock <= 0n || finalBlock > currentBlock) {
+      finalBlock = currentBlock > 0n ? currentBlock : 1n;
     }
 
-    const formattedUtxoId = utxoId.startsWith('0x') ? (utxoId as Hex) : (`0x${utxoId}` as Hex);
-    const witness = await plasmaService.generateWitness(formattedUtxoId);
+    const witness = await plasmaService.generateWitnessForBlock(formattedUtxoId, finalBlock);
 
-    if (!witness) {
+    return res.json({
+      success: true,
+      utxoId: formattedUtxoId,
+      witness,
+      blockNumber: finalBlock.toString(),
+    });
+  } catch (error: any) {
+    const message = error?.message || 'Generate witness error';
+    if (message.includes('Element not found')) {
       return res.status(404).json({
         success: false,
         error: 'UTXO not found in accumulator',
       });
     }
+    console.error('Generate witness error:', error);
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Aggregate UTXOs for withdrawal (operator via backend)
+app.post('/api/withdraw/aggregate', async (req: Request, res: Response) => {
+  try {
+    const { userAddress, tokenAddress, amount, signature } = req.body as {
+      userAddress: Address;
+      tokenAddress: Address;
+      amount: string;
+      signature: Hex;
+    };
+
+    if (!userAddress || !tokenAddress || !amount || !signature) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: userAddress, tokenAddress, amount, signature',
+      });
+    }
+
+    const result = await plasmaService.aggregateForWithdrawal(
+      userAddress,
+      tokenAddress,
+      BigInt(amount),
+      signature
+    );
 
     res.json({
       success: true,
-      utxoId: formattedUtxoId,
-      witness,
+      data: {
+        ...result,
+        changeAmount: result.changeAmount.toString(),
+      },
     });
   } catch (error: any) {
-    console.error('Generate witness error:', error);
+    console.error('Aggregate withdrawal error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create L2 block (operator via backend)
+app.post('/api/withdraw/create-block', async (_req: Request, res: Response) => {
+  try {
+    const result = await plasmaService.createL2Block();
+    res.json({
+      success: true,
+      data: {
+        ...result,
+        currentBlock: result.currentBlock.toString(),
+      },
+    });
+  } catch (error: any) {
+    console.error('Create L2 block error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Register Exit UTXO on L1 (operator via backend)
+app.post('/api/withdraw/register-exit-utxo', async (req: Request, res: Response) => {
+  try {
+    const { exitUtxoId, userAddress, tokenAddress, amount, blockNumber } = req.body as {
+      exitUtxoId: Hex;
+      userAddress: Address;
+      tokenAddress: Address;
+      amount: string;
+      blockNumber: string;
+    };
+
+    if (!exitUtxoId || !userAddress || !tokenAddress || !amount || !blockNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: exitUtxoId, userAddress, tokenAddress, amount, blockNumber',
+      });
+    }
+
+    const hash = await plasmaService.registerExitUtxo(
+      exitUtxoId,
+      userAddress,
+      tokenAddress,
+      BigInt(amount),
+      BigInt(blockNumber)
+    );
+
+    res.json({ success: true, data: { txHash: hash } });
+  } catch (error: any) {
+    console.error('Register Exit UTXO error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -343,6 +579,77 @@ app.get('/api/stats', (req: Request, res: Response) => {
   }
 });
 
+// ============ PERSISTENCE ENDPOINTS ============
+
+// Get persistence status
+app.get('/api/persistence/status', (req: Request, res: Response) => {
+  try {
+    const hasStateFile = existsSync(STATE_FILE);
+    const hasData = plasmaService.hasData();
+
+    res.json({
+      success: true,
+      stateFile: STATE_FILE,
+      hasStateFile,
+      hasData,
+      accumulatorSize: plasmaService.getAccumulatorSize(),
+      autoSaveInterval: AUTO_SAVE_INTERVAL,
+    });
+  } catch (error: any) {
+    console.error('Get persistence status error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual save state
+app.post('/api/persistence/save', (req: Request, res: Response) => {
+  try {
+    const success = saveState();
+    res.json({
+      success,
+      message: success ? 'State saved successfully' : 'Failed to save state',
+      stateFile: STATE_FILE,
+    });
+  } catch (error: any) {
+    console.error('Manual save error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manual load state (reload from file)
+app.post('/api/persistence/load', (req: Request, res: Response) => {
+  try {
+    const success = loadState();
+    res.json({
+      success,
+      message: success ? 'State loaded successfully' : 'No state file found or failed to load',
+      stateFile: STATE_FILE,
+      accumulatorSize: plasmaService.getAccumulatorSize(),
+    });
+  } catch (error: any) {
+    console.error('Manual load error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Export state (download backup)
+app.get('/api/persistence/export', (req: Request, res: Response) => {
+  try {
+    const state = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      plasma: plasmaService.serialize(),
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=plasma-state-backup-${Date.now()}.json`);
+    res.json(state);
+  } catch (error: any) {
+    console.error('Export state error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: Function) => {
   console.error('Unhandled error:', err);
@@ -376,6 +683,13 @@ function gracefulShutdown(signal: string) {
   // Stop auto block submission
   plasmaService.stopAutoBlockSubmission();
 
+  // Stop auto-save
+  stopAutoSave();
+
+  // Save state before shutdown
+  console.log('[Persistence] Saving state before shutdown...');
+  saveState();
+
   server.close(() => {
     console.log('HTTP server closed');
     process.exit(0);
@@ -390,3 +704,10 @@ function gracefulShutdown(signal: string) {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Also handle uncaught exceptions by saving state
+process.on('uncaughtException', (error) => {
+  console.error('[FATAL] Uncaught exception:', error);
+  saveState();
+  process.exit(1);
+});

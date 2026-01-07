@@ -125,6 +125,11 @@ export class L1MonitorUTXO {
     console.log('[L1 Monitor UTXO] Using WebSocket event watching');
 
     // Get historical events first
+    const latestBlock = await this.publicClient.getBlockNumber();
+    console.log(
+      `[L1 Monitor UTXO] Fetching historical events from block ${fromBlock} to ${latestBlock}`
+    );
+
     const historicalLogs = await this.publicClient.getLogs({
       address: this.config.rootChainAddress,
       event: rootChainUtxoAbi[0], // DepositCreated event
@@ -133,13 +138,17 @@ export class L1MonitorUTXO {
     });
 
     console.log(
-      `[L1 Monitor UTXO] Found ${historicalLogs.length} historical UTXO deposits`
+      `[L1 Monitor UTXO] Found ${historicalLogs.length} historical UTXO deposit events`
     );
 
     // Process historical events
-    for (const log of historicalLogs) {
-      const deposit = this.parseDepositCreatedLog(log);
-      await onDeposit(deposit);
+    if (historicalLogs.length > 0) {
+      console.log(`[L1 Monitor UTXO] Processing historical events...`);
+      for (const log of historicalLogs) {
+        const deposit = this.parseDepositCreatedLog(log);
+        await onDeposit(deposit);
+      }
+      console.log(`[L1 Monitor UTXO] Finished processing historical events`);
     }
 
     // Watch for new events

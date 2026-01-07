@@ -193,14 +193,17 @@ async function getL1TokenBalance(l1Client: any, address: Address): Promise<bigin
 /**
  * Get witness from backend
  */
-async function getWitness(utxoId: Hex): Promise<{ x: bigint; y: bigint } | null> {
+async function getWitness(utxoId: Hex): Promise<{ witness: { x: bigint; y: bigint }; blockNumber: bigint } | null> {
   try {
     const response = await fetch(`${BACKEND_URL}/api/witness/${utxoId}`);
     const data = await response.json();
     if (data.success && data.witness) {
       return {
-        x: BigInt(data.witness.x),
-        y: BigInt(data.witness.y),
+        witness: {
+          x: BigInt(data.witness.x),
+          y: BigInt(data.witness.y),
+        },
+        blockNumber: BigInt(data.blockNumber),
       };
     }
     return null;
@@ -583,20 +586,17 @@ async function main() {
     }
 
     // Get witness for Exit UTXO
-    const witness = await getWitness(exitUtxoId);
-    if (!witness) {
+    const witnessData = await getWitness(exitUtxoId);
+    if (!witnessData) {
       console.error('\nFailed to get witness for Exit UTXO');
       process.exit(1);
     }
 
-    console.log(`  Witness X: ${witness.x.toString().slice(0, 30)}...`);
+    const { witness } = witnessData;
+    const correctBlock = witnessData.blockNumber;
 
-    // Find correct block for witness
-    const correctBlock = await findCorrectBlockForWitness(l1Client, exitUtxoId, witness);
-    if (!correctBlock) {
-      console.error('\nCould not find valid block for witness');
-      process.exit(1);
-    }
+    console.log(`  Witness X: ${witness.x.toString().slice(0, 30)}...`);
+    console.log(`  Using block: ${correctBlock}`);
 
     // Start exit on L1
     console.log('\n[9/9] Starting exit on L1...');

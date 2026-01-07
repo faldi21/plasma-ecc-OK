@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/relay.ts",
+    "dev:utxo": "tsx watch src/relay-utxo.ts",
     "build": "tsc",
     "start": "node dist/relay.js",
+    "start:utxo": "node dist/relay-utxo.js",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
