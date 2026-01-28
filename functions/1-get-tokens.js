@@ -59,7 +59,7 @@ async function getTokens() {
   const token = new ethers.Contract(config.tokenAddress, tokenABI, wallet);
 
   console.log("=".repeat(60));
-  console.log("           PLASMA TOKEN MINTING");
+  console.log("           DIKE TOKEN MINTING");
   console.log("=".repeat(60));
   console.log(`Network:       ${config.networkName}`);
   console.log(`Wallet:        ${await wallet.getAddress()}`);
@@ -70,7 +70,7 @@ async function getTokens() {
 
   // --- Daftar test address ---
   const testAddresses = [
-    "0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76", // PK_USER_A
+    //"0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76", // PK_USER_A
     "0x62dc14Fe819A241e176ee6A813f51045d04A0cda",
     "0xfa5410ca7e30c694d332a0b7f5ff5ef74d84e0ab",
   ];
@@ -81,16 +81,16 @@ async function getTokens() {
     try {
       // Check current balance first
       const balanceBefore = await token.balanceOf(address);
-      console.log(`[${address.slice(0,10)}...] Current balance: ${ethers.formatEther(balanceBefore)} PLASMA`);
+      console.log(`[${address.slice(0,10)}...] Current balance: ${ethers.formatEther(balanceBefore)} DIKE`);
 
       // Mint tokens
       const tx = await token.mint(address, mintAmount);
-      console.log(`[${address.slice(0,10)}...] Minting ${ethers.formatEther(mintAmount)} PLASMA... TX: ${tx.hash.slice(0,20)}...`);
+      console.log(`[${address.slice(0,10)}...] Minting ${ethers.formatEther(mintAmount)} DIKE... TX: ${tx.hash.slice(0,20)}...`);
       await tx.wait();
 
       // Check new balance
       const balanceAfter = await token.balanceOf(address);
-      console.log(`[${address.slice(0,10)}...] New balance: ${ethers.formatEther(balanceAfter)} PLASMA`);
+      console.log(`[${address.slice(0,10)}...] New balance: ${ethers.formatEther(balanceAfter)} DIKE`);
       console.log("");
     } catch (error) {
       console.error(`[${address.slice(0,10)}...] Error: ${error.message}\n`);

@@ -28,7 +28,7 @@ export function TransferForm() {
   const l2Client = usePublicClient({ chainId: 31337 })
   const { data: walletClient } = useWalletClient()
 
-  const [toAddress, setToAddress] = useState<string>(PREDEFINED_ACCOUNTS[0].address)
+  const [toAddress, setToAddress] = useState<string>('')
   const [amount, setAmount] = useState('')
   const [isCustomAddress, setIsCustomAddress] = useState(false)
   const [contractConfig, setContractConfig] = useState<ContractConfig | null>(null)
@@ -48,6 +48,24 @@ export function TransferForm() {
     getContractConfig().then(setContractConfig)
   }, [])
 
+  // Smart default recipient selection
+  useEffect(() => {
+    if (connectedAddress) {
+      // Find the first account that is NOT the connected address
+      const otherAccount = PREDEFINED_ACCOUNTS.find(
+        (acc) => acc.address.toLowerCase() !== connectedAddress.toLowerCase()
+      )
+      
+      // Only update if we found one and it's different from current selection
+      // or if current selection is the connected address
+      if (otherAccount) {
+        if (!toAddress || toAddress.toLowerCase() === connectedAddress.toLowerCase()) {
+          setToAddress(otherAccount.address)
+        }
+      }
+    }
+  }, [connectedAddress])
+
   // Fetch user's UTXOs
   useEffect(() => {
     if (!connectedAddress || !contractConfig || !l2Client || chainId !== 31337) return
@@ -57,7 +75,7 @@ export function TransferForm() {
       try {
         const utxoIds = await l2Client.readContract({
           address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-          abi: PlasmaChainUTXOABI,
+          abi: PlasmaChainUTXOABI.abi,
           functionName: 'getUserUtxos',
           args: [connectedAddress],
         }) as Hex[]
@@ -69,7 +87,7 @@ export function TransferForm() {
           try {
             const utxoData = await l2Client.readContract({
               address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-              abi: PlasmaChainUTXOABI,
+              abi: PlasmaChainUTXOABI.abi,
               functionName: 'utxos',
               args: [utxoId],
             }) as [Hex, Address, Address, bigint, bigint, boolean, Hex]
@@ -154,7 +172,7 @@ export function TransferForm() {
       // 4. Get nonce from contract
       const nonce = await l2Client.readContract({
         address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-        abi: PlasmaChainUTXOABI,
+        abi: PlasmaChainUTXOABI.abi,
         functionName: 'nonces',
         args: [connectedAddress],
       }) as bigint
@@ -178,29 +196,29 @@ export function TransferForm() {
       // @ts-ignore - ABI type inference issue with JSON import
       const hash = await walletClient.writeContract({
         address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-        abi: PlasmaChainUTXOABI,
+        abi: PlasmaChainUTXOABI.abi,
         functionName: 'transferUtxo',
         args: [inputUtxoIds, outputOwners, outputAmounts, signature],
       })
 
       // Wait for receipt
       const receipt = await l2Client.waitForTransactionReceipt({ hash })
-      const succeeded = receipt.status === 'success' || receipt.status === 1n
+      const succeeded = receipt.status === 'success'
       if (!succeeded) {
         throw new Error('Transfer transaction reverted on L2')
       }
 
       const createdLogs = parseEventLogs({
-        abi: PlasmaChainUTXOABI,
+        abi: PlasmaChainUTXOABI.abi,
         logs: receipt.logs,
         eventName: 'UtxoCreated',
         strict: false,
       })
 
-      const newUtxos = createdLogs.map((log) => ({
-        utxoId: (log.args as { utxoId: Hex }).utxoId,
-        owner: (log.args as { owner: Address }).owner,
-        amount: (log.args as { amount: bigint }).amount,
+      const newUtxos = createdLogs.map((log: any) => ({
+        utxoId: log.args.utxoId,
+        owner: log.args.owner,
+        amount: log.args.amount,
       })).filter((utxo) => Boolean(utxo.utxoId))
 
       const newUtxoIds = newUtxos.map((utxo) => utxo.utxoId)
@@ -338,6 +356,13 @@ export function TransferForm() {
                   value={toAddress}
                   onChange={(e) => setToAddress(e.target.value)}
                 />
+              )}
+              
+              {connectedAddress && toAddress && connectedAddress.toLowerCase() === toAddress.toLowerCase() && (
+                <div className="mt-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-3 h-3" />
+                  <span>Warning: You are transferring to yourself. Balance will not change.</span>
+                </div>
               )}
             </div>
           </div>

@@ -22,7 +22,7 @@ export const envConfig: EnvConfig = {
   L2_RPC_URL: getEnvVar('L2_RPC_URL', false) || 'http://localhost:8545',
   OPERATOR_PRIVATE_KEY: getEnvVar('OPERATOR_PRIVATE_KEY') as Hex,
   L2_OPERATOR_PRIVATE_KEY: getEnvVar('L2_OPERATOR_PRIVATE_KEY') as Hex,
-  ROOT_CHAIN_ADDRESS: getEnvVar('ROOT_CHAIN_ADDRESS') as Address,
+  ROOT_CHAIN_ADDRESS: getEnvVar('ROOT_CHAIN_ADDRESS', false) as Address,
   PLASMA_CHAIN_ADDRESS: getEnvVar('PLASMA_CHAIN_ADDRESS', false) as Address,
   PLASMA_TOKEN_ADDRESS: getEnvVar('PLASMA_TOKEN_ADDRESS') as Address,
   L2_PLASMA_CHAIN_ADDRESS: getEnvVar('L2_PLASMA_CHAIN_ADDRESS') as Address,

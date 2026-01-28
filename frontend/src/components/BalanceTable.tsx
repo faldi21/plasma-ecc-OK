@@ -65,7 +65,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
           // Get user's UTXOs from contract
           const utxoIds = await l2Client.readContract({
             address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-            abi: PlasmaChainUTXOABI,
+            abi: PlasmaChainUTXOABI.abi,
             functionName: 'getUserUtxos',
             args: [addr],
           }) as `0x${string}`[]
@@ -78,7 +78,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
             try {
               const utxoData = await l2Client.readContract({
                 address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-                abi: PlasmaChainUTXOABI,
+                abi: PlasmaChainUTXOABI.abi,
                 functionName: 'utxos',
                 args: [utxoId],
               }) as [string, string, string, bigint, bigint, boolean, string]

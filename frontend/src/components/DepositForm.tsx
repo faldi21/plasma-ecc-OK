@@ -96,7 +96,7 @@ export function DepositForm() {
       const parsedAmount = parseEther(amount)
       writeDeposit({
         address: contractConfig.ROOT_CHAIN_UTXO_ADDRESS as Address,
-        abi: RootChainUTXOABI,
+        abi: RootChainUTXOABI.abi,
         functionName: 'deposit',
         args: [contractConfig.PLASMA_TOKEN_ADDRESS as Address, parsedAmount],
         chainId: sepolia.id,

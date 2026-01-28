@@ -6,6 +6,7 @@
     "dotenv": "^17.2.3",
     "elliptic": "^6.6.1",
     "ethers": "^6.15.0",
+    "plasma-ecc-backend": "file:backend",
     "viem": "^2.39.2"
   }
 }

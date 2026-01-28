@@ -174,7 +174,7 @@ export function WithdrawForm() {
         try {
           const exitData = await l1Client.readContract({
             address: contractConfig?.ROOT_CHAIN_UTXO_ADDRESS as Address,
-            abi: RootChainUTXOABI,
+            abi: RootChainUTXOABI.abi,
             functionName: 'exits',
             args: [item.exitId],
           }) as [Address, Hex, Address, bigint, bigint, bigint, boolean, boolean]
@@ -215,7 +215,7 @@ export function WithdrawForm() {
       try {
         const utxoIds = await l2PublicClient.readContract({
           address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-          abi: PlasmaChainUTXOABI,
+          abi: PlasmaChainUTXOABI.abi,
           functionName: 'getUserUtxos',
           args: [connectedAddress],
         }) as Hex[]
@@ -227,7 +227,7 @@ export function WithdrawForm() {
           try {
             const utxoData = await l2PublicClient.readContract({
               address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-              abi: PlasmaChainUTXOABI,
+              abi: PlasmaChainUTXOABI.abi,
               functionName: 'utxos',
               args: [utxoId],
             }) as [Hex, Address, Address, bigint, bigint, boolean, Hex]
@@ -288,7 +288,7 @@ export function WithdrawForm() {
       setCurrentStep('sign')
       const nonce = await l2PublicClient.readContract({
         address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-        abi: PlasmaChainUTXOABI,
+        abi: PlasmaChainUTXOABI.abi,
         functionName: 'nonces',
         args: [connectedAddress],
       }) as bigint
@@ -398,7 +398,7 @@ export function WithdrawForm() {
 
       const l1TxHash = await walletClient.writeContract({
         address: contractConfig.ROOT_CHAIN_UTXO_ADDRESS as Address,
-        abi: RootChainUTXOABI,
+        abi: RootChainUTXOABI.abi,
         functionName: 'startExit',
         args: [exitUtxoId, witnessBlockNumber, witness],
         chain: sepolia,
@@ -409,7 +409,7 @@ export function WithdrawForm() {
       if (l1Client) {
         const receipt = await l1Client.waitForTransactionReceipt({ hash: l1TxHash })
         const exitLogs = parseEventLogs({
-          abi: RootChainUTXOABI,
+          abi: RootChainUTXOABI.abi,
           logs: receipt.logs,
           eventName: 'ExitStarted',
         })
@@ -478,7 +478,7 @@ export function WithdrawForm() {
 
       const hash = await walletClient.writeContract({
         address: contractConfig.ROOT_CHAIN_UTXO_ADDRESS as Address,
-        abi: RootChainUTXOABI,
+        abi: RootChainUTXOABI.abi,
         functionName: 'finalizeExit',
         args: [trimmedExitId as Hex],
         chain: sepolia,

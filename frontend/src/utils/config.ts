@@ -28,10 +28,10 @@ export async function getContractConfig(): Promise<ContractConfig> {
     // Fallback to env vars
     const fallback: ContractConfig = {
       mode: 'UTXO',
-      ROOT_CHAIN_UTXO_ADDRESS: (import.meta.env.VITE_ROOT_CHAIN_UTXO_ADDRESS || '0x353f1e8535197d51effa85e1b5aa4e0b4376c5a7') as string,
-      PLASMA_CHAIN_UTXO_ADDRESS: (import.meta.env.VITE_PLASMA_CHAIN_UTXO_ADDRESS || '0x2860763ac53e487b1521dfd6510f6780b2d86223') as string,
+      ROOT_CHAIN_UTXO_ADDRESS: (import.meta.env.VITE_ROOT_CHAIN_UTXO_ADDRESS || '0xA174D1816585662ff34D540CB6E215A18d984B48') as string,
+      PLASMA_CHAIN_UTXO_ADDRESS: (import.meta.env.VITE_PLASMA_CHAIN_UTXO_ADDRESS || '0x308e62a9c18E0E4BFfD5F573f3152a1968BbeE61') as string,
       L2_PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_L2_PLASMA_TOKEN_ADDRESS || '0x9E7088C23e5C0B2D02cD7886A1BDbC7FE8b71016') as string,
-      PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_PLASMA_TOKEN_ADDRESS || '0x7c408cf9ade8df74b92d69d960e8036054c819c3') as string,
+      PLASMA_TOKEN_ADDRESS: (import.meta.env.VITE_PLASMA_TOKEN_ADDRESS || '0x4d43a10b3d8ec0662b84E7C4e718AdCA55d1A09D') as string,
     }
     cachedConfig = fallback
     return fallback
