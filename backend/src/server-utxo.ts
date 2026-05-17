@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { envConfig } from './config/env.js';
 import { getPlasmaServiceUTXO, type SerializedPlasmaState } from './plasma/PlasmaServiceUTXO.js';
+import { tpsRunner, type TpsTestConfig } from './plasma/TpsTestRunner.js';
 import type { Address, Hex } from 'viem';
 
 const app = express();
@@ -646,6 +647,102 @@ app.get('/api/persistence/export', (req: Request, res: Response) => {
     res.json(state);
   } catch (error: any) {
     console.error('Export state error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ TPS TEST ENDPOINTS ============
+
+app.post('/api/test/tps/start', async (req: Request, res: Response) => {
+  try {
+    const { totalTransactions, concurrency, amountPerTx } = req.body as Partial<TpsTestConfig>;
+
+    if (!totalTransactions || !concurrency || !amountPerTx) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: totalTransactions, concurrency, amountPerTx',
+      });
+    }
+
+    if (totalTransactions < 1 || totalTransactions > 5000) {
+      return res.status(400).json({
+        success: false,
+        error: 'totalTransactions must be between 1 and 5000',
+      });
+    }
+
+    if (concurrency < 1 || concurrency > 3) {
+      return res.status(400).json({
+        success: false,
+        error: 'concurrency must be between 1 and 3',
+      });
+    }
+
+    await tpsRunner.start({ totalTransactions, concurrency, amountPerTx });
+    res.json({ success: true, message: 'TPS test started', config: { totalTransactions, concurrency, amountPerTx } });
+  } catch (error: any) {
+    console.error('TPS test start error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/test/tps/status', (_req: Request, res: Response) => {
+  try {
+    const status = tpsRunner.getStatus();
+    res.json({ success: true, ...status });
+  } catch (error: any) {
+    console.error('TPS test status error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/test/tps/stop', (_req: Request, res: Response) => {
+  try {
+    tpsRunner.stop();
+    res.json({ success: true, message: 'Stop signal sent' });
+  } catch (error: any) {
+    console.error('TPS test stop error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/test/tps/history', (_req: Request, res: Response) => {
+  try {
+    res.json({ success: true, history: tpsRunner.getHistory() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.patch('/api/test/tps/history/:id', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params as { id: string };
+    const { label } = req.body as { label: string };
+    if (!label) return res.status(400).json({ success: false, error: 'Missing label' });
+    const ok = tpsRunner.setLabel(id, label);
+    if (!ok) return res.status(404).json({ success: false, error: 'Result not found' });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/test/tps/history/:id', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params as { id: string };
+    const ok = tpsRunner.deleteResult(id);
+    if (!ok) return res.status(404).json({ success: false, error: 'Result not found' });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/test/tps/history', (_req: Request, res: Response) => {
+  try {
+    tpsRunner.clearHistory();
+    res.json({ success: true });
+  } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 });

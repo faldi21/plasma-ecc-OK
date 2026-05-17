@@ -413,11 +413,11 @@ export function WithdrawForm() {
           logs: receipt.logs,
           eventName: 'ExitStarted',
         })
-        const matchingLog = exitLogs.find((log) => {
-          const utxoId = (log.args as { utxoId?: Hex }).utxoId
+        const matchingLog = exitLogs.find((log: any) => {
+          const utxoId = log.args?.utxoId
           return !utxoId || utxoId.toLowerCase() === exitUtxoId.toLowerCase()
         })
-        exitId = (matchingLog?.args as { exitId?: Hex })?.exitId ?? null
+        exitId = (matchingLog as any)?.args?.exitId ?? null
       }
 
       if (!exitId) {

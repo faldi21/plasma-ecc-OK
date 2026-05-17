@@ -7,9 +7,10 @@ import { BalanceTable } from './components/BalanceTable'
 import { TransferForm } from './components/TransferForm'
 import { DepositForm } from './components/DepositForm'
 import { WithdrawForm } from './components/WithdrawForm'
+import { TestingResults } from './components/TestingResults'
 import { type Address } from 'viem'
 import { cn } from './utils'
-import { LayoutDashboard, Send, ArrowDownCircle, ArrowUpCircle } from 'lucide-react'
+import { LayoutDashboard, Send, ArrowDownCircle, ArrowUpCircle, BarChart3 } from 'lucide-react'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 const queryClient = new QueryClient()
@@ -25,7 +26,7 @@ const TEST_ADDRESSES: Address[] = [
 ]
 
 function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit' | 'withdraw'>('balances')
+  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit' | 'withdraw' | 'testing'>('balances')
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center py-12">
@@ -94,6 +95,18 @@ function Dashboard() {
             <ArrowUpCircle className="w-4 h-4" />
             Withdraw
           </button>
+          <button
+            onClick={() => setActiveTab('testing')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'testing'
+                ? "bg-purple-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Testing Results
+          </button>
         </div>
       </div>
 
@@ -103,8 +116,10 @@ function Dashboard() {
         <TransferForm />
       ) : activeTab === 'deposit' ? (
         <DepositForm />
-      ) : (
+      ) : activeTab === 'withdraw' ? (
         <WithdrawForm />
+      ) : (
+        <TestingResults />
       )}
     </div>
   )

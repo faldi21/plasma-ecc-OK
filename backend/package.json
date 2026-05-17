@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:legacy": "tsx watch src/server.ts",
     "dev:utxo": "tsx watch src/server-utxo.ts",
+    "run:utxo": "tsx src/server-utxo.ts",
     "dev:fast": "tsx watch src/server-fast.ts",
     "build": "tsc",
     "start": "node dist/index.js",

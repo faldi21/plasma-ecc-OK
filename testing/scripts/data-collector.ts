@@ -164,11 +164,17 @@ export class DataCollector {
    * Save load test result
    */
   saveLoadTestResult(result: LoadTestResult, filename?: string): string {
-    const timestamp = new Date().toISOString().split('T')[0];
-    const name = filename || `load-test-${result.targetTps}tps-${timestamp}.json`;
+    const timestamp = getDateString();
+    const name = filename || `load-test-${timestamp}.json`;
     const filepath = resolve(this.dataDir, 'benchmarks', name);
 
-    writeFileSync(filepath, JSON.stringify(result, null, 2));
+    writeFileSync(filepath, JSON.stringify(result, (_, value) => {
+      // Convert BigInt to string for JSON serialization
+      if (typeof value === 'bigint') {
+        return value.toString();
+      }
+      return value;
+    }, 2));
 
     console.log(`✓ Load test result saved: ${filepath}`);
     return filepath;

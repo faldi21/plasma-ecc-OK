@@ -12,6 +12,7 @@ DATA_DIR="$SCRIPT_DIR/data"
 STATE_FILE="$DATA_DIR/anvil-state.json"
 ANVIL_PORT=8545
 ANVIL_HOST="0.0.0.0"
+ANVIL_GAS_LIMIT=300000000
 
 # Colors
 RED='\033[0;31m'
@@ -60,7 +61,7 @@ start_fresh() {
     fi
 
     echo -e "${GREEN}Starting Anvil...${NC}"
-    anvil --host $ANVIL_HOST --port $ANVIL_PORT &
+    anvil --host $ANVIL_HOST --port $ANVIL_PORT --gas-limit $ANVIL_GAS_LIMIT &
 
     sleep 2
 
@@ -90,11 +91,11 @@ start_with_state() {
         echo -e "${YELLOW}No saved state found at: $STATE_FILE${NC}"
         echo -e "${YELLOW}Starting fresh instead...${NC}"
         echo ""
-        anvil --host $ANVIL_HOST --port $ANVIL_PORT &
+        anvil --host $ANVIL_HOST --port $ANVIL_PORT --gas-limit $ANVIL_GAS_LIMIT &
     else
         echo -e "${GREEN}Loading state from: $STATE_FILE${NC}"
         echo ""
-        anvil --host $ANVIL_HOST --port $ANVIL_PORT --load-state "$STATE_FILE" &
+        anvil --host $ANVIL_HOST --port $ANVIL_PORT --gas-limit $ANVIL_GAS_LIMIT --load-state "$STATE_FILE" &
     fi
 
     sleep 2

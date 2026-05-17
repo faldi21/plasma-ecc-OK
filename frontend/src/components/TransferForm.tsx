@@ -185,7 +185,7 @@ export function TransferForm() {
 
       // Wait for receipt
       const receipt = await l2Client.waitForTransactionReceipt({ hash })
-      const succeeded = receipt.status === 'success' || receipt.status === 1n
+      const succeeded = receipt.status === 'success'
       if (!succeeded) {
         throw new Error('Transfer transaction reverted on L2')
       }
@@ -197,10 +197,10 @@ export function TransferForm() {
         strict: false,
       })
 
-      const newUtxos = createdLogs.map((log) => ({
-        utxoId: (log.args as { utxoId: Hex }).utxoId,
-        owner: (log.args as { owner: Address }).owner,
-        amount: (log.args as { amount: bigint }).amount,
+      const newUtxos = createdLogs.map((log: any) => ({
+        utxoId: log.args?.utxoId,
+        owner: log.args?.owner,
+        amount: log.args?.amount,
       })).filter((utxo) => Boolean(utxo.utxoId))
 
       const newUtxoIds = newUtxos.map((utxo) => utxo.utxoId)
