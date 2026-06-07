@@ -48,6 +48,7 @@ contract PlasmaChainUTXO {
 
     // Pending transactions for next block
     bytes32[] public pendingUtxos;
+    uint256 public pendingProcessedCursor;  // tracks chunked createBlock progress
 
     // Accumulator
     ECCAccumulator.Accumulator private accumulator;
@@ -144,11 +145,8 @@ contract PlasmaChainUTXO {
         // Mark deposit as processed
         processedDeposits[depositUtxoId] = true;
 
-        // Add to pending for next block
+        // Add to pending for next block (accumulator update deferred to createBlock)
         pendingUtxos.push(depositUtxoId);
-
-        // Add to accumulator
-        accumulator.add(depositUtxoId);
 
         emit UtxoCreated(depositUtxoId, user, token, amount, currentBlock + 1);
 
@@ -211,6 +209,149 @@ contract PlasmaChainUTXO {
         return outputUtxoIds;
     }
 
+    /**
+     * @dev Batch transfer for high-throughput scenarios (single-sender)
+     * All input UTXOs must be owned by msg.sender. No signature needed.
+     * Each sub-op has 1 input and 1-2 outputs (matched by outputCounts).
+     *
+     * @param inputs           N input UTXO IDs (one per sub-op, all owned by msg.sender)
+     * @param allOutputOwners  Flat output owners (length = sum(outputCounts))
+     * @param allOutputAmounts Flat output amounts
+     * @param outputCounts     Number of outputs per sub-op (length = N, each 1 or 2)
+     */
+    function transferUtxoBatch(
+        bytes32[] calldata inputs,
+        address[] calldata allOutputOwners,
+        uint256[] calldata allOutputAmounts,
+        uint8[] calldata outputCounts
+    ) external returns (bytes32[] memory) {
+        require(inputs.length > 0 && inputs.length == outputCounts.length, "Length mismatch");
+        require(allOutputOwners.length == allOutputAmounts.length, "Owner/amount mismatch");
+
+        uint256 totalOutputs = 0;
+        for (uint256 i = 0; i < outputCounts.length; i++) {
+            require(outputCounts[i] >= 1 && outputCounts[i] <= 2, "Invalid output count");
+            totalOutputs += outputCounts[i];
+        }
+        require(allOutputOwners.length == totalOutputs, "Output count mismatch");
+
+        bytes32[] memory outputUtxoIds = new bytes32[](totalOutputs);
+        uint256 outIdx = 0;
+
+        for (uint256 opIdx = 0; opIdx < inputs.length; opIdx++) {
+            outIdx = _executeBatchOp(
+                inputs[opIdx],
+                outputCounts[opIdx],
+                opIdx,
+                outIdx,
+                allOutputOwners,
+                allOutputAmounts,
+                outputUtxoIds
+            );
+        }
+
+        return outputUtxoIds;
+    }
+
+    function _executeBatchOp(
+        bytes32 inputId,
+        uint8 outCount,
+        uint256 opIdx,
+        uint256 outIdxStart,
+        address[] calldata allOutputOwners,
+        uint256[] calldata allOutputAmounts,
+        bytes32[] memory outputUtxoIds
+    ) internal returns (uint256) {
+        UTXO storage input = utxos[inputId];
+        require(input.utxoId != bytes32(0), "Input not found");
+        require(!input.spent, "Input already spent");
+        require(input.owner == msg.sender, "Not owner");
+
+        // Validate output sum equals input amount
+        uint256 outSum = 0;
+        for (uint8 j = 0; j < outCount; j++) {
+            require(allOutputOwners[outIdxStart + j] != address(0) && allOutputAmounts[outIdxStart + j] > 0, "Invalid output");
+            outSum += allOutputAmounts[outIdxStart + j];
+        }
+        require(outSum == input.amount, "Amount mismatch");
+
+        bytes32 txHash = keccak256(abi.encodePacked(inputId, opIdx, nonces[msg.sender], block.timestamp));
+        input.spent = true;
+        input.spentInTx = txHash;
+        emit UtxoSpent(inputId, txHash);
+
+        address token = input.token;
+        uint256 nextBlock = currentBlock + 1;
+
+        for (uint8 j = 0; j < outCount; j++) {
+            bytes32 outId = keccak256(abi.encodePacked(txHash, j));
+            address owner = allOutputOwners[outIdxStart + j];
+            uint256 amount = allOutputAmounts[outIdxStart + j];
+
+            utxos[outId] = UTXO({
+                utxoId: outId,
+                owner: owner,
+                token: token,
+                amount: amount,
+                createdInBlock: nextBlock,
+                spent: false,
+                spentInTx: bytes32(0)
+            });
+
+            userUtxos[owner].push(outId);
+            pendingUtxos.push(outId);
+            outputUtxoIds[outIdxStart + j] = outId;
+
+            emit UtxoCreated(outId, owner, token, amount, nextBlock);
+        }
+
+        nonces[msg.sender]++;
+        return outIdxStart + outCount;
+    }
+
+    /**
+     * @dev Batch deposit creation (operator only). For test/funding scenarios.
+     */
+    function createDepositUtxoBatch(
+        bytes32[] calldata depositIds,
+        address[] calldata users,
+        address token,
+        uint256[] calldata amounts
+    ) external onlyOperator returns (bytes32[] memory) {
+        uint256 n = depositIds.length;
+        require(n > 0 && n == users.length && n == amounts.length, "Length mismatch");
+
+        uint256 nextBlock = currentBlock + 1;
+        for (uint256 i = 0; i < n; i++) {
+            bytes32 depositId = depositIds[i];
+            address user = users[i];
+            uint256 amount = amounts[i];
+
+            require(!processedDeposits[depositId], "Deposit already processed");
+            require(user != address(0), "Invalid user");
+            require(amount > 0, "Invalid amount");
+
+            utxos[depositId] = UTXO({
+                utxoId: depositId,
+                owner: user,
+                token: token,
+                amount: amount,
+                createdInBlock: nextBlock,
+                spent: false,
+                spentInTx: bytes32(0)
+            });
+
+            userUtxos[user].push(depositId);
+            processedDeposits[depositId] = true;
+            pendingUtxos.push(depositId);
+            // accumulator update deferred to createBlock
+
+            emit UtxoCreated(depositId, user, token, amount, nextBlock);
+        }
+
+        return depositIds;
+    }
+
     function _sumOutputs(address[] calldata owners, uint256[] calldata amounts) internal pure returns (uint256) {
         uint256 total = 0;
         for (uint256 i = 0; i < amounts.length; i++) {
@@ -262,7 +403,7 @@ contract PlasmaChainUTXO {
             userUtxos[outputOwners[i]].push(outputUtxoId);
             outputUtxoIds[i] = outputUtxoId;
             pendingUtxos.push(outputUtxoId);
-            accumulator.add(outputUtxoId);
+            // accumulator update deferred to createBlock for throughput
 
             emit UtxoCreated(outputUtxoId, outputOwners[i], token, outputAmounts[i], nextBlock);
         }
@@ -311,9 +452,8 @@ contract PlasmaChainUTXO {
         utxo.spent = true;
         utxo.spentInTx = withdrawalTxHash;
 
-        // Add withdrawal tx to accumulator
+        // Queue withdrawal tx (accumulator update deferred to createBlock)
         pendingUtxos.push(withdrawalTxHash);
-        accumulator.add(withdrawalTxHash);
 
         // Increment nonce
         nonces[user]++;
@@ -442,7 +582,7 @@ contract PlasmaChainUTXO {
 
         userUtxos[user].push(exitUtxoId);
         pendingUtxos.push(exitUtxoId);
-        accumulator.add(exitUtxoId);
+        // accumulator update deferred to createBlock
 
         emit UtxoCreated(exitUtxoId, user, token, withdrawAmount, currentBlock + 1);
         emit UtxoSpent(exitUtxoId, aggregateTxHash);  // Emit spent event
@@ -469,7 +609,7 @@ contract PlasmaChainUTXO {
 
             userUtxos[user].push(changeUtxoId);
             pendingUtxos.push(changeUtxoId);
-            accumulator.add(changeUtxoId);
+            // accumulator update deferred to createBlock
 
             emit UtxoCreated(changeUtxoId, user, token, changeAmount, currentBlock + 1);
         }
@@ -495,23 +635,48 @@ contract PlasmaChainUTXO {
      * @dev Create new block with pending UTXOs
      */
     function createBlock() external onlyOperator returns (uint256) {
-        require(pendingUtxos.length > 0, "No pending UTXOs");
+        (uint256 blockNum, bool isComplete) = _createBlockChunked(type(uint256).max);
+        require(isComplete, "Pending too large for single call - use createBlockChunked");
+        return blockNum;
+    }
 
-        currentBlock++;
+    /**
+     * @dev Chunked block creation. Process up to `maxOps` pending UTXOs per call.
+     * Returns (blockNumber, isComplete). When isComplete=true, a new block is committed.
+     * Caller should keep calling until isComplete to drain pendingUtxos.
+     * This avoids out-of-gas when many UTXOs accumulate before a block commit.
+     */
+    function createBlockChunked(uint256 maxOps) external onlyOperator returns (uint256, bool) {
+        return _createBlockChunked(maxOps);
+    }
 
-        blocks[currentBlock] = Block({
-            blockNumber: currentBlock,
-            utxoIds: pendingUtxos,
-            accumulatorValue: accumulator.getValue(),
-            timestamp: block.timestamp
-        });
+    function _createBlockChunked(uint256 maxOps) internal returns (uint256, bool) {
+        require(pendingUtxos.length > pendingProcessedCursor, "Nothing to process");
+        require(maxOps > 0, "maxOps must be > 0");
 
-        emit BlockCreated(currentBlock, pendingUtxos.length);
+        uint256 endIdx = pendingProcessedCursor + maxOps;
+        if (endIdx > pendingUtxos.length) endIdx = pendingUtxos.length;
 
-        // Clear pending
-        delete pendingUtxos;
+        for (uint256 i = pendingProcessedCursor; i < endIdx; i++) {
+            accumulator.add(pendingUtxos[i]);
+        }
+        pendingProcessedCursor = endIdx;
 
-        return currentBlock;
+        // If we've processed everything, commit the block and reset
+        if (pendingProcessedCursor == pendingUtxos.length) {
+            currentBlock++;
+            blocks[currentBlock] = Block({
+                blockNumber: currentBlock,
+                utxoIds: pendingUtxos,
+                accumulatorValue: accumulator.getValue(),
+                timestamp: block.timestamp
+            });
+            emit BlockCreated(currentBlock, pendingUtxos.length);
+            delete pendingUtxos;
+            pendingProcessedCursor = 0;
+            return (currentBlock, true);
+        }
+        return (currentBlock, false);
     }
 
     // ============ VIEW FUNCTIONS ============

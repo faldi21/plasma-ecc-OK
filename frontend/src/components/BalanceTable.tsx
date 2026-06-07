@@ -3,7 +3,7 @@ import { usePublicClient, useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { formatEther, type Address } from 'viem'
 import { cn } from '../utils'
-import { getContractConfig, type ContractConfig } from '../utils/config'
+import { getContractConfig, getBackendApiUrl, type ContractConfig } from '../utils/config'
 import PlasmaChainUTXOABI from '../abis/PlasmaChainUTXO.json'
 import PlasmaTokenABI from '../abis/PlasmaToken.json'
 import { RefreshCw, Layers, Database, Loader2, Coins } from 'lucide-react'
@@ -42,6 +42,20 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
     getContractConfig().then(setContractConfig)
   }, [])
 
+  // Lightweight poll for TPS test status; pause heavy polling while a test is funding/running
+  const { data: tpsTestStatus } = useQuery({
+    queryKey: ['tps-test-active-check'],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${getBackendApiUrl()}/api/test/tps/status`)
+        const data = await res.json()
+        return data.status as 'idle' | 'funding' | 'running' | 'complete' | 'error'
+      } catch { return 'idle' as const }
+    },
+    refetchInterval: 1000,
+  })
+  const isTpsTestActive = tpsTestStatus === 'funding' || tpsTestStatus === 'running'
+
   // 1. Fetch L2 Native ETH Balances (Native)
   const { data: l2EthBalances, refetch: refetchL2Eth } = useQuery({
     queryKey: ['l2-eth-balances', addresses],
@@ -49,80 +63,63 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
       if (!l2Client) return null
       return Promise.all(addresses.map(addr => l2Client.getBalance({ address: addr })))
     },
-    refetchInterval: 2000,
+    refetchInterval: isTpsTestActive ? false : 2000,
   })
 
-  // 2. Fetch UTXO Balances from L2 Contract
+  // 2. Fetch UTXO Balances from L2 Contract (optimized: 2 calls per address instead of N+1)
   const { data: utxoBalances, refetch: refetchUtxo } = useQuery({
-    queryKey: ['utxo-balances', addresses, contractConfig?.PLASMA_CHAIN_UTXO_ADDRESS],
+    queryKey: ['utxo-balances', addresses, contractConfig?.PLASMA_CHAIN_UTXO_ADDRESS, contractConfig?.L2_PLASMA_TOKEN_ADDRESS],
     queryFn: async (): Promise<UserBalance[]> => {
       if (!l2Client || !contractConfig) return []
 
-      const results: UserBalance[] = []
-
-      for (const addr of addresses) {
+      // Fetch all addresses in parallel; per address: 1 balance + 1 unspent-ids = 2 RPC calls
+      return Promise.all(addresses.map(async (addr): Promise<UserBalance> => {
         try {
-          // Get user's UTXOs from contract
-          const utxoIds = await l2Client.readContract({
-            address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-            abi: PlasmaChainUTXOABI,
-            functionName: 'getUserUtxos',
-            args: [addr],
-          }) as `0x${string}`[]
+          const [balance, unspentIds] = await Promise.all([
+            l2Client.readContract({
+              address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
+              abi: PlasmaChainUTXOABI,
+              functionName: 'getUserBalance',
+              args: [addr, contractConfig.L2_PLASMA_TOKEN_ADDRESS as Address],
+            }) as Promise<bigint>,
+            l2Client.readContract({
+              address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
+              abi: PlasmaChainUTXOABI,
+              functionName: 'getUnspentUtxos',
+              args: [addr],
+            }) as Promise<`0x${string}`[]>,
+          ])
 
-          let totalBalance = 0n
-          const utxos: UTXO[] = []
+          // We have the IDs and the total balance; populate utxos with minimal info (skip per-UTXO detail fetch)
+          // For full detail UI (showUtxoDetails), fetch on demand when user expands a row.
+          const utxos: UTXO[] = unspentIds.map((utxoId) => ({
+            utxoId,
+            owner: addr,
+            token: contractConfig.L2_PLASMA_TOKEN_ADDRESS,
+            amount: '0', // omitted to avoid N+1; expand row for full detail
+            spent: false,
+            blockNumber: 0,
+          }))
 
-          // Get details for each UTXO
-          for (const utxoId of utxoIds) {
-            try {
-              const utxoData = await l2Client.readContract({
-                address: contractConfig.PLASMA_CHAIN_UTXO_ADDRESS as Address,
-                abi: PlasmaChainUTXOABI,
-                functionName: 'utxos',
-                args: [utxoId],
-              }) as [string, string, string, bigint, bigint, boolean, string]
-              // utxos() returns: utxoId, owner, token, amount, createdInBlock, spent, spentInTx
-
-              const [, owner, token, amount, blockNumber, spent] = utxoData
-
-              if (!spent) {
-                totalBalance += amount
-                utxos.push({
-                  utxoId,
-                  owner,
-                  token,
-                  amount: amount.toString(),
-                  spent,
-                  blockNumber: Number(blockNumber),
-                })
-              }
-            } catch (e) {
-              console.warn(`Failed to fetch UTXO ${utxoId}:`, e)
-            }
-          }
-
-          results.push({
+          return {
             address: addr,
-            l2Balance: totalBalance,
-            utxoCount: utxos.length,
+            l2Balance: balance,
+            utxoCount: unspentIds.length,
             utxos,
-          })
+          }
         } catch (e) {
-          console.warn(`Failed to fetch UTXOs for ${addr}:`, e)
-          results.push({
+          console.warn(`Failed to fetch balance for ${addr}:`, e)
+          return {
             address: addr,
             l2Balance: 0n,
             utxoCount: 0,
             utxos: [],
-          })
+          }
         }
-      }
-
-      return results
+      }))
     },
-    refetchInterval: 3000,
-    enabled: !!contractConfig,
+    refetchInterval: isTpsTestActive ? false : 3000,
+    enabled: !!contractConfig && !isTpsTestActive,
   })
 
   // 3. Fetch L1 Balances (On Demand)

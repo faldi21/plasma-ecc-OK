@@ -90,12 +90,17 @@ function startAutoSave() {
   }
 
   autoSaveTimer = setInterval(() => {
+    // Skip auto-save while TPS benchmark is running — writeFileSync blocks the event loop
+    // and pollutes latency measurements with periodic 500-2000ms stalls.
+    const tpsStatus = tpsRunner.getStatus().status;
+    if (tpsStatus === 'funding' || tpsStatus === 'running') return;
+
     if (plasmaService.hasData()) {
       saveState();
     }
   }, AUTO_SAVE_INTERVAL);
 
-  console.log(`[Persistence] Auto-save enabled (interval: ${AUTO_SAVE_INTERVAL}ms)`);
+  console.log(`[Persistence] Auto-save enabled (interval: ${AUTO_SAVE_INTERVAL}ms, pauses during TPS test)`);
 }
 
 function stopAutoSave() {
@@ -655,7 +660,7 @@ app.get('/api/persistence/export', (req: Request, res: Response) => {
 
 app.post('/api/test/tps/start', async (req: Request, res: Response) => {
   try {
-    const { totalTransactions, concurrency, amountPerTx } = req.body as Partial<TpsTestConfig>;
+    const { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize } = req.body as Partial<TpsTestConfig>;
 
     if (!totalTransactions || !concurrency || !amountPerTx) {
       return res.status(400).json({
@@ -664,10 +669,10 @@ app.post('/api/test/tps/start', async (req: Request, res: Response) => {
       });
     }
 
-    if (totalTransactions < 1 || totalTransactions > 5000) {
+    if (totalTransactions < 1 || totalTransactions > 50000) {
       return res.status(400).json({
         success: false,
-        error: 'totalTransactions must be between 1 and 5000',
+        error: 'totalTransactions must be between 1 and 50000',
       });
     }
 
@@ -678,8 +683,16 @@ app.post('/api/test/tps/start', async (req: Request, res: Response) => {
       });
     }
 
-    await tpsRunner.start({ totalTransactions, concurrency, amountPerTx });
-    res.json({ success: true, message: 'TPS test started', config: { totalTransactions, concurrency, amountPerTx } });
+    if (batchSize !== undefined && (batchSize < 1 || batchSize > 500)) {
+      return res.status(400).json({
+        success: false,
+        error: 'batchSize must be between 1 and 500',
+      });
+    }
+
+    const config: TpsTestConfig = { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize };
+    await tpsRunner.start(config);
+    res.json({ success: true, message: 'TPS test started', config });
   } catch (error: any) {
     console.error('TPS test start error:', error);
     res.status(500).json({ success: false, error: error.message });

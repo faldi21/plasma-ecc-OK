@@ -4,6 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { AlertCircle, TrendingUp, TrendingDown, Check, Play, Square, Zap, Clock, Activity, RotateCw, Trash2, Download, Edit3, History } from 'lucide-react'
 import { getBackendApiUrl } from '../utils/config'
 
+// Safe number formatter — handles null/undefined/NaN from API gracefully
+const fix = (v: number | null | undefined, digits = 2): string =>
+  typeof v === 'number' && isFinite(v) ? v.toFixed(digits) : '0'
+
 interface TestResult {
   week: number
   type: string
@@ -121,6 +125,10 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
   const [totalTransactions, setTotalTransactions] = useState(50)
   const [concurrency, setConcurrency] = useState(3)
   const [amountPerTx, setAmountPerTx] = useState('0.01')
+  const [batchSize, setBatchSize] = useState(1)
+  const [createBlockEvery, setCreateBlockEvery] = useState(0)
+  const [revertAfter, setRevertAfter] = useState(true)
+  const [flushPendingChunkSize, setFlushPendingChunkSize] = useState(0)
   const [tpsStatus, setTpsStatus] = useState<TpsStatus>(INITIAL_STATUS)
   const [startError, setStartError] = useState<string | null>(null)
   const pollingRef = useRef<number | null>(null)
@@ -182,7 +190,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
       const res = await fetch(`${apiBase}/api/test/tps/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ totalTransactions, concurrency, amountPerTx }),
+        body: JSON.stringify({ totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize }),
       })
       const data = await res.json()
       if (!data.success) {
@@ -258,72 +266,143 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
       <CardContent className="space-y-6">
         {/* Config Panel (idle/complete/error) */}
         {(isIdle || isComplete || isError) && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs text-gray-400">Total Transactions</label>
-              <input
-                type="number"
-                min={1}
-                max={5000}
-                value={totalTransactions}
-                onChange={(e) => setTotalTransactions(parseInt(e.target.value) || 1)}
-                disabled={isActive}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-              <input
-                type="range"
-                min={10}
-                max={500}
-                step={10}
-                value={Math.min(totalTransactions, 500)}
-                onChange={(e) => setTotalTransactions(parseInt(e.target.value))}
-                disabled={isActive}
-                className="w-full"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs text-gray-400">Concurrency (max 3)</label>
-              <select
-                value={concurrency}
-                onChange={(e) => setConcurrency(parseInt(e.target.value))}
-                disabled={isActive}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                <option value={1}>1 (sequential)</option>
-                <option value={2}>2 (parallel)</option>
-                <option value={3}>3 (max parallel)</option>
-              </select>
-              <p className="text-xs text-gray-500">Capped by test account count</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs text-gray-400">Amount per TX (ETH)</label>
-              <input
-                type="text"
-                value={amountPerTx}
-                onChange={(e) => setAmountPerTx(e.target.value)}
-                disabled={isActive}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-              <p className="text-xs text-gray-500">Small amount = more headroom</p>
-            </div>
-            <div className="flex flex-col justify-end gap-2">
-              {(isComplete || isError) && (
-                <button
-                  onClick={handleReset}
-                  className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-md transition-colors flex items-center justify-center gap-2"
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs text-gray-400">Total Transactions (sub-ops)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50000}
+                  value={totalTransactions}
+                  onChange={(e) => setTotalTransactions(parseInt(e.target.value) || 1)}
+                  disabled={isActive}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <input
+                  type="range"
+                  min={10}
+                  max={5000}
+                  step={10}
+                  value={Math.min(totalTransactions, 5000)}
+                  onChange={(e) => setTotalTransactions(parseInt(e.target.value))}
+                  disabled={isActive}
+                  className="w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-400">Parallel Senders (max 3)</label>
+                <select
+                  value={concurrency}
+                  onChange={(e) => setConcurrency(parseInt(e.target.value))}
+                  disabled={isActive}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                 >
-                  <RotateCw className="w-4 h-4" />
-                  Reset
-                </button>
-              )}
-              <button
-                onClick={handleStart}
-                disabled={isActive}
-                className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-md transition-colors flex items-center justify-center gap-2"
-              >
-                <Play className="w-4 h-4" />
-                {isComplete || isError ? 'Run Again' : 'Start Benchmark'}
-              </button>
+                  <option value={1}>1 (sequential)</option>
+                  <option value={2}>2 (parallel)</option>
+                  <option value={3}>3 (max parallel)</option>
+                </select>
+                <p className="text-xs text-gray-500">Capped by test account count</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-400">Amount per Sub-op (ETH)</label>
+                <input
+                  type="text"
+                  value={amountPerTx}
+                  onChange={(e) => setAmountPerTx(e.target.value)}
+                  disabled={isActive}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <p className="text-xs text-gray-500">Each sub-op transfers this amount</p>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-700/50 pt-4">
+              <p className="text-xs font-semibold text-purple-300 mb-2 uppercase tracking-wide">Performance Tuning (Plasma-UTXO-ECC v2)</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-400">Batch Size (sub-ops per tx)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={batchSize}
+                    onChange={(e) => setBatchSize(parseInt(e.target.value) || 1)}
+                    disabled={isActive}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <p className="text-xs text-gray-500">
+                    1 = legacy. {batchSize > 1 && <span className="text-purple-300">{batchSize} sub-ops bundled per tx (transferUtxoBatch)</span>}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-400">Commit Block Every N sub-ops</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    value={createBlockEvery}
+                    onChange={(e) => setCreateBlockEvery(parseInt(e.target.value) || 0)}
+                    disabled={isActive}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <p className="text-xs text-gray-500">
+                    0 = never (defer accumulator entirely). Hot path stays fast.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-400 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={revertAfter}
+                      onChange={(e) => setRevertAfter(e.target.checked)}
+                      disabled={isActive}
+                      className="rounded"
+                    />
+                    Revert Anvil State After Test
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    Auto-snapshot before test, evm_revert after. {revertAfter ? <span className="text-green-300">State clean tiap run</span> : <span className="text-yellow-300">State terus accumulate</span>}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-400">Flush Pending (chunk size)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={flushPendingChunkSize}
+                    onChange={(e) => setFlushPendingChunkSize(parseInt(e.target.value) || 0)}
+                    disabled={isActive}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Post-test: drain pendingUtxos via createBlockChunked (e.g. 50). 0 = skip.
+                  </p>
+                </div>
+                <div className="flex flex-col justify-end gap-2">
+                  {(isComplete || isError) && (
+                    <button
+                      onClick={handleReset}
+                      className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-md transition-colors flex items-center justify-center gap-2"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                      Reset
+                    </button>
+                  )}
+                  <button
+                    onClick={handleStart}
+                    disabled={isActive}
+                    className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-md transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    {isComplete || isError ? 'Run Again' : 'Start Benchmark'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -360,7 +439,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
                 <div className="flex items-center gap-2 text-gray-400 text-xs mb-1">
                   <Zap className="w-3 h-3" /> Current TPS
                 </div>
-                <p className="text-2xl font-bold text-purple-300">{tpsStatus.currentTps.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-purple-300">{fix(tpsStatus.currentTps, 2)}</p>
               </div>
               <div className="bg-slate-800/50 rounded-lg p-4">
                 <div className="flex items-center gap-2 text-gray-400 text-xs mb-1">
@@ -378,7 +457,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
                 <div className="flex items-center gap-2 text-gray-400 text-xs mb-1">
                   <Clock className="w-3 h-3" /> Elapsed
                 </div>
-                <p className="text-2xl font-bold">{(tpsStatus.elapsedMs / 1000).toFixed(1)}s</p>
+                <p className="text-2xl font-bold">{fix((tpsStatus.elapsedMs || 0) / 1000, 1)}s</p>
               </div>
             </div>
 
@@ -416,7 +495,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-gradient-to-br from-purple-900/40 to-purple-700/20 border border-purple-700/30 rounded-lg p-4">
                 <p className="text-xs text-purple-300 mb-1">Final TPS</p>
-                <p className="text-3xl font-bold text-purple-100">{result.tps.toFixed(2)}</p>
+                <p className="text-3xl font-bold text-purple-100">{fix(result.tps, 2)}</p>
               </div>
               <div className="bg-gradient-to-br from-green-900/40 to-green-700/20 border border-green-700/30 rounded-lg p-4">
                 <p className="text-xs text-green-300 mb-1">Success Rate</p>
@@ -429,7 +508,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
               </div>
               <div className="bg-gradient-to-br from-blue-900/40 to-blue-700/20 border border-blue-700/30 rounded-lg p-4">
                 <p className="text-xs text-blue-300 mb-1">Duration</p>
-                <p className="text-3xl font-bold text-blue-100">{(result.durationMs / 1000).toFixed(2)}s</p>
+                <p className="text-3xl font-bold text-blue-100">{fix((result.durationMs || 0) / 1000, 2)}s</p>
               </div>
               <div className="bg-gradient-to-br from-slate-900/40 to-slate-700/20 border border-slate-700/30 rounded-lg p-4">
                 <p className="text-xs text-slate-300 mb-1">Total TX</p>
@@ -445,15 +524,15 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <p className="text-xs text-gray-400">Min</p>
-                  <p className="text-xl font-bold text-green-400">{result.minLatency.toFixed(0)}ms</p>
+                  <p className="text-xl font-bold text-green-400">{fix(result.minLatency, 0)}ms</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-400">Avg</p>
-                  <p className="text-xl font-bold text-yellow-400">{result.avgLatency.toFixed(0)}ms</p>
+                  <p className="text-xl font-bold text-yellow-400">{fix(result.avgLatency, 0)}ms</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-400">Max</p>
-                  <p className="text-xl font-bold text-red-400">{result.maxLatency.toFixed(0)}ms</p>
+                  <p className="text-xl font-bold text-red-400">{fix(result.maxLatency, 0)}ms</p>
                 </div>
               </div>
             </div>
@@ -541,11 +620,11 @@ function TpsHistoryTable({ history, refreshing, onRefresh }: { history: TpsHisto
       r.config?.amountPerTx ?? '',
       r.successfulTransactions,
       r.failedTransactions,
-      r.tps.toFixed(4),
-      r.durationMs,
-      r.avgLatency.toFixed(2),
-      r.minLatency.toFixed(2),
-      r.maxLatency.toFixed(2),
+      fix(r.tps, 4),
+      r.durationMs ?? 0,
+      fix(r.avgLatency, 2),
+      fix(r.minLatency, 2),
+      fix(r.maxLatency, 2),
     ].join(','))
     const csv = [headers.join(','), ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -669,11 +748,11 @@ function TpsHistoryTable({ history, refreshing, onRefresh }: { history: TpsHisto
                           ({r.successfulTransactions}/{r.totalTransactions})
                         </span>
                       </td>
-                      <td className="py-2 px-2 text-right font-bold text-purple-300">{r.tps.toFixed(2)}</td>
-                      <td className="py-2 px-2 text-right text-xs">{(r.durationMs / 1000).toFixed(2)}s</td>
-                      <td className="py-2 px-2 text-right text-xs">{r.avgLatency.toFixed(0)}ms</td>
+                      <td className="py-2 px-2 text-right font-bold text-purple-300">{fix(r.tps, 2)}</td>
+                      <td className="py-2 px-2 text-right text-xs">{fix((r.durationMs || 0) / 1000, 2)}s</td>
+                      <td className="py-2 px-2 text-right text-xs">{fix(r.avgLatency, 0)}ms</td>
                       <td className="py-2 px-2 text-right text-xs text-gray-400">
-                        {r.minLatency.toFixed(0)}/{r.maxLatency.toFixed(0)}
+                        {fix(r.minLatency, 0)}/{fix(r.maxLatency, 0)}
                       </td>
                       <td className="py-2 px-2 text-right">
                         <button
@@ -753,7 +832,7 @@ export function TestingResults() {
             <CardContent className="space-y-3">
               <div>
                 <p className="text-xs text-gray-400">TPS</p>
-                <p className="text-2xl font-bold">{result.tps.toFixed(2)}</p>
+                <p className="text-2xl font-bold">{fix(result.tps, 2)}</p>
               </div>
               <div className="flex justify-between text-xs">
                 <div>
@@ -959,8 +1038,8 @@ export function TestingResults() {
                     <td className="py-3 px-4 text-right">
                       <span className="text-green-400 font-semibold">{result.successRate}%</span>
                     </td>
-                    <td className="py-3 px-4 text-right font-semibold">{result.tps.toFixed(2)}</td>
-                    <td className="py-3 px-4 text-right">{result.avgLatency.toFixed(0)}</td>
+                    <td className="py-3 px-4 text-right font-semibold">{fix(result.tps, 2)}</td>
+                    <td className="py-3 px-4 text-right">{fix(result.avgLatency, 0)}</td>
                   </tr>
                 ))}
               </tbody>
