@@ -27,6 +27,8 @@ remappings.txt
 # Dev/test scripts (historical, not needed for reproduction)
 test-tps/
 testing/
+benchmark/
+function/
 
 # Local run scripts with machine-specific config
 anvil.sh

@@ -18,40 +18,6 @@ Key architectural contribution: a **deferred-commitment design** that decouples 
 
 ---
 
-## Empirical Results (Paper Tables)
-
-### Table 2 — Membership-Proof Size
-
-| Set size n | 10 | 100 | 500 | 1,000 |
-|---|---|---|---|---|
-| Merkle (bytes) | 128 | 224 | 288 | 320 |
-| **ECC (bytes)** | **64** | **64** | **64** | **64** |
-| **Reduction** | **50.0%** | **71.4%** | **77.8%** | **80.0%** |
-
-All values empirically validated by building actual trees and serializing witnesses.
-
-### Table 3 — Gas Cost per Operation (N=10 runs, mean ± std)
-
-| Operation | Merkle (gas) | ECC Acc. (gas) | Savings |
-|---|---|---|---|
-| Deposit (L1→L2) | 257,614 ± 4 | 240,488 ± 6 | -7.1% |
-| Transfer (L2) | 301,576 ± 8 | 301,558 ± 0 | -0.0% |
-| Withdrawal (L2→L1) | 329,438 ± 8 | 329,439 ± 6 | 0.0% |
-| **Block submission (n=100)** | **8,518,890 ± 96** | **165,253,805 ± 503,899** | **94.8%** |
-
-> Hot-path operations are statistically indistinguishable — deferred-commitment design confirmed.
-
-### Table 4 — Throughput (Peak, T=2000, B=300, C=3)
-
-| T | ECC TPS | ECC Lat | Merkle TPS | Merkle Lat |
-|---|---|---|---|---|
-| 500 | ~4,673 | 143ms | ~4,684 | 142ms |
-| 1,000 | ~4,843 | 138ms | ~4,751 | 140ms |
-| 1,500 | ~4,630 | 144ms | ~4,706 | 142ms |
-| 2,000 | ~4,819 | 138ms | ~4,640 | 143ms |
-
----
-
 ## Architecture
 
 ```
@@ -158,8 +124,8 @@ Copy `.env.example` to `.env` and fill in:
 ```env
 # L2 (Anvil)
 L2_RPC_URL=http://localhost:8545
-OPERATOR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-L2_OPERATOR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+OPERATOR_PRIVATE_KEY=
+L2_OPERATOR_PRIVATE_KEY=
 
 # Contract addresses (filled after deploy)
 PLASMA_CHAIN_UTXO_ADDRESS=
@@ -169,6 +135,9 @@ L2_PLASMA_TOKEN_ADDRESS=
 # L1 (Sepolia)
 L1_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
 ROOT_CHAIN_UTXO_ADDRESS=
+
+# (Opsional) 
+#L1_FROM_BLOCK=0
 ```
 
 ### Run
@@ -204,7 +173,12 @@ cp out/PlasmaChainUTXOMerkle.sol/PlasmaChainUTXOMerkle.json backend/abi/PlasmaCh
 cd backend && npm run dev:utxo
 ```
 
-**5. Start frontend**
+**5. Start relay**
+```bash
+cd relay && npm run dev:utxo
+```
+
+**6. Start frontend**
 ```bash
 cd frontend && npm run dev
 # Open http://localhost:5173
