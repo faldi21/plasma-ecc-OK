@@ -13,10 +13,23 @@ docs/
 
 # Dotenv file
 .env
+.env.backup
+.env.bak
 
 # Markdown — allow README
 *.md
 !README.md
+
+# Lockfiles & local config at root level
+foundry.lock
+remappings.txt
+
+# Dev/test scripts (historical, not needed for reproduction)
+test-tps/
+testing/
+
+# Local run scripts with machine-specific config
+anvil.sh
 node_modules
 wallet.txt
 .anvil-state.json
