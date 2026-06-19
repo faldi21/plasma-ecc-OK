@@ -13,7 +13,7 @@ import { sepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { RelayConfig, DepositEvent } from './types.js';
 
-// RootChain ABI
+// Legacy RootChain ABI
 const rootChainAbi = [
   {
     type: 'event',

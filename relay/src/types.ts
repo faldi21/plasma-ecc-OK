@@ -70,6 +70,23 @@ export interface RelayConfig {
 
   // Optional
   l2ApiUrl?: string;
+
+  // UTXO mode
+  useUtxoMode?: boolean;
+}
+
+/**
+ * UTXO Deposit Event from L1
+ */
+export interface UTXODepositEvent {
+  utxoId: Hex;
+  user: Address;
+  token: Address;
+  amount: bigint;
+  depositNonce: bigint;
+  blockNumber: bigint;
+  transactionHash: Hex;
+  logIndex: number;
 }
 
 /**

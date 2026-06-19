@@ -28,6 +28,10 @@ export const envConfig: EnvConfig = {
   L2_PLASMA_CHAIN_ADDRESS: getEnvVar('L2_PLASMA_CHAIN_ADDRESS') as Address,
   L2_PLASMA_TOKEN_ADDRESS: getEnvVar('L2_PLASMA_TOKEN_ADDRESS') as Address,
   PORT: getEnvVar('PORT', false) || '3001',
+  // UTXO Contract Addresses
+  ROOT_CHAIN_UTXO_ADDRESS: getEnvVar('ROOT_CHAIN_UTXO_ADDRESS', false) as Address,
+  PLASMA_CHAIN_UTXO_ADDRESS: getEnvVar('PLASMA_CHAIN_UTXO_ADDRESS', false) as Address,
+  PLASMA_CHAIN_UTXO_MERKLE_ADDRESS: getEnvVar('PLASMA_CHAIN_UTXO_MERKLE_ADDRESS', false) as Address,
 };
 
 export default envConfig;

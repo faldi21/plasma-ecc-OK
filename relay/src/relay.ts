@@ -4,20 +4,43 @@ import { loadConfig, printConfig } from './config.js';
 import { StateManager } from './state.js';
 import { L1Monitor } from './l1-monitor.js';
 import { L2Executor } from './l2-executor.js';
-import type { DepositEvent } from './types.js';
+import { L1MonitorUTXO } from './l1-monitor-utxo.js';
+import { L2ExecutorUTXO } from './l2-executor-utxo.js';
+import type { DepositEvent, UTXODepositEvent } from './types.js';
 import type { Hex } from 'viem';
 
 /**
  * Plasma ECC Relay Service
  * Monitors L1 deposits and relays to L2
+ * Auto-detects UTXO mode from .env configuration
  * Notifies Backend for block submission
  */
 class RelayService {
   private config = loadConfig();
   private state = new StateManager(this.config.l1FromBlock);
-  private l1Monitor = new L1Monitor(this.config);
-  private l2Executor = new L2Executor(this.config);
+
+  // Legacy mode (balance-based)
+  private l1Monitor: L1Monitor | null = null;
+  private l2Executor: L2Executor | null = null;
+
+  // UTXO mode
+  private l1MonitorUtxo: L1MonitorUTXO | null = null;
+  private l2ExecutorUtxo: L2ExecutorUTXO | null = null;
+
   private isRunning = false;
+
+  constructor() {
+    // Initialize the appropriate monitors based on mode
+    if (this.config.useUtxoMode) {
+      console.log('[Relay] UTXO Mode Detected - Using RootChainUTXO contracts');
+      this.l1MonitorUtxo = new L1MonitorUTXO(this.config);
+      this.l2ExecutorUtxo = new L2ExecutorUTXO(this.config);
+    } else {
+      console.log('[Relay] Legacy Mode - Using RootChain contracts');
+      this.l1Monitor = new L1Monitor(this.config);
+      this.l2Executor = new L2Executor(this.config);
+    }
+  }
 
   /**
    * Start the relay service
@@ -46,14 +69,23 @@ class RelayService {
     this.isRunning = true;
     const fromBlock = stats.lastBlock;
 
-    console.log('🚀 Starting relay service...\n');
-    console.log('📌 Relay will notify Backend for block submission\n');
+    console.log('Starting relay service...\n');
 
-    await this.l1Monitor.startMonitoring(fromBlock, async (deposit) => {
-      await this.handleDeposit(deposit);
-    });
+    if (this.config.useUtxoMode) {
+      // UTXO Mode
+      console.log('Listening for DepositCreated events on RootChainUTXO\n');
+      await this.l1MonitorUtxo!.startMonitoring(fromBlock, async (deposit) => {
+        await this.handleUtxoDeposit(deposit);
+      });
+    } else {
+      // Legacy Mode
+      console.log('Relay will notify Backend for block submission\n');
+      await this.l1Monitor!.startMonitoring(fromBlock, async (deposit) => {
+        await this.handleDeposit(deposit);
+      });
+    }
 
-    console.log('✅ Relay service is running!\n');
+    console.log('Relay service is running!\n');
     console.log('Press Ctrl+C to stop gracefully\n');
   }
 
@@ -116,8 +148,8 @@ class RelayService {
 
     try {
       // Relay to L2
-      console.log('[Relay] 🔄 Relaying to L2...');
-      const result = await this.l2Executor.relayDeposit(
+      console.log('[Relay] Relaying to L2...');
+      const result = await this.l2Executor!.relayDeposit(
         deposit.user,
         deposit.token,
         deposit.amount
@@ -153,9 +185,114 @@ class RelayService {
       console.log('═══════════════════════════════════════════════════════');
       console.log('');
     } catch (error: any) {
-      console.error(`[Relay] ❌ Error processing deposit:`, error.message);
+      console.error(`[Relay] Error processing deposit:`, error.message);
       console.log('═══════════════════════════════════════════════════════');
       console.log('');
+    }
+  }
+
+  /**
+   * Handle a UTXO deposit event from L1
+   */
+  private async handleUtxoDeposit(deposit: UTXODepositEvent): Promise<void> {
+    // Create unique key for this deposit
+    const depositKey = `${deposit.transactionHash}:${deposit.logIndex}`;
+
+    // Check if already processed
+    if (this.state.isProcessed(depositKey)) {
+      console.log(`[Relay UTXO] Already processed: ${depositKey}`);
+      return;
+    }
+
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('New UTXO Deposit Event Detected');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`UTXO ID:      ${deposit.utxoId}`);
+    console.log(`User:         ${deposit.user}`);
+    console.log(`Token:        ${deposit.token}`);
+    console.log(`Amount:       ${deposit.amount.toString()}`);
+    console.log(`Nonce:        ${deposit.depositNonce.toString()}`);
+    console.log(`Block:        ${deposit.blockNumber}`);
+    console.log(`Tx Hash:      ${deposit.transactionHash}`);
+    console.log('───────────────────────────────────────────────────────');
+
+    try {
+      // Relay to L2 - Create deposit UTXO
+      console.log('[Relay UTXO] Creating deposit UTXO on L2...');
+      const result = await this.l2ExecutorUtxo!.relayUtxoDeposit(
+        deposit.utxoId,
+        deposit.user,
+        deposit.token,
+        deposit.amount
+      );
+
+      if (!result.success) {
+        console.error(`[Relay UTXO] Failed to relay: ${result.error}`);
+        return;
+      }
+
+      console.log('[Relay UTXO] Successfully created UTXO on L2');
+      console.log(`  createDepositUtxo tx: ${result.l2TxHash}`);
+      if (result.mintTxHash) {
+        console.log(`  mint tx:              ${result.mintTxHash}`);
+      }
+
+      // Notify Backend about UTXO deposit
+      await this.notifyBackendUtxo({
+        type: 'UTXO_DEPOSIT',
+        utxoId: deposit.utxoId,
+        txHash: result.l2TxHash,
+        from: deposit.user,
+        to: deposit.user,
+        token: deposit.token,
+        amount: deposit.amount.toString(),
+        blockNumber: deposit.blockNumber.toString(),
+      });
+
+      // Mark as processed
+      this.state.markProcessed(depositKey);
+      this.state.updateLastBlock(deposit.blockNumber);
+      this.state.incrementRelayedDeposits();
+
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+    } catch (error: any) {
+      console.error(`[Relay UTXO] Error processing deposit:`, error.message);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+    }
+  }
+
+  /**
+   * Notify Backend about new UTXO transaction
+   */
+  private async notifyBackendUtxo(tx: {
+    type: 'UTXO_DEPOSIT' | 'UTXO_TRANSFER' | 'UTXO_WITHDRAWAL';
+    utxoId: Hex;
+    txHash: Hex;
+    from?: string;
+    to?: string;
+    token?: string;
+    amount?: string;
+    blockNumber?: string;
+  }): Promise<void> {
+    try {
+      const apiUrl = this.config.l2ApiUrl || 'http://localhost:3001';
+      const response = await axios.post(
+        `${apiUrl}/api/transactions/notify`,
+        tx,
+        { timeout: 10000 }
+      );
+
+      if (response.data?.success) {
+        console.log(`[Relay UTXO] Notified Backend about ${tx.type}`);
+        console.log(`[Relay UTXO]    UTXO ID: ${tx.utxoId.slice(0, 20)}...`);
+      } else {
+        console.error(`[Relay UTXO] Failed to notify Backend: ${response.data?.error}`);
+      }
+    } catch (error: any) {
+      console.error(`[Relay UTXO] Error notifying Backend: ${error.message}`);
     }
   }
 
@@ -167,14 +304,18 @@ class RelayService {
       return;
     }
 
-    console.log('\n🛑 Stopping relay service...');
+    console.log('\nStopping relay service...');
 
     this.isRunning = false;
 
     // Stop monitoring
-    this.l1Monitor.stopMonitoring();
+    if (this.config.useUtxoMode) {
+      this.l1MonitorUtxo?.stopMonitoring();
+    } else {
+      this.l1Monitor?.stopMonitoring();
+    }
 
-    console.log('✅ Relay service stopped\n');
+    console.log('Relay service stopped\n');
   }
 
   /**

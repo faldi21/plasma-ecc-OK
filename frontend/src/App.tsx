@@ -1,14 +1,17 @@
 import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { WagmiProvider, useAccount, useConnect, useDisconnect } from 'wagmi'
-import { injected } from 'wagmi/connectors'
+import { WagmiProvider } from 'wagmi'
+import { RainbowKitProvider } from '@rainbow-me/rainbowkit'
 import { config } from './config'
 import { BalanceTable } from './components/BalanceTable'
 import { TransferForm } from './components/TransferForm'
 import { DepositForm } from './components/DepositForm'
+import { WithdrawForm } from './components/WithdrawForm'
+import { TestingResults } from './components/TestingResults'
 import { type Address } from 'viem'
 import { cn } from './utils'
-import { LayoutDashboard, Send, Wallet, LogOut, ArrowDownCircle } from 'lucide-react'
+import { LayoutDashboard, Send, ArrowDownCircle, ArrowUpCircle, BarChart3 } from 'lucide-react'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 const queryClient = new QueryClient()
 
@@ -23,109 +26,120 @@ const TEST_ADDRESSES: Address[] = [
 ]
 
 function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit'>('balances')
-  const { address, isConnected } = useAccount()
-  const { connect } = useConnect()
-  const { disconnect } = useDisconnect()
+  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit' | 'withdraw' | 'testing'>('balances')
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col items-center py-12">
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center py-12">
       <div className="w-full max-w-6xl px-6 mb-8 flex items-end justify-between">
         <div>
-            <h1 className="text-4xl font-bold tracking-tight mb-2">
-            Plasma <span className="text-primary">ECC</span> Dashboard
-            </h1>
-            <p className="text-muted-foreground">
-            Real-time Layer 2 balance monitoring and state verification.
-            </p>
+          <h1 className="text-4xl font-bold tracking-tight mb-2">
+            Plasma <span className="text-blue-400">ECC</span> <span className="text-yellow-400">UTXO</span>
+          </h1>
+          <p className="text-slate-400">
+            Layer 2 Plasma with UTXO model and ECC Accumulator
+          </p>
         </div>
 
         <div className="flex items-center gap-4">
-            {isConnected ? (
-                <div className="flex items-center gap-3 bg-secondary/50 p-1.5 pl-4 rounded-full border border-white/5">
-                    <div className="text-sm font-mono text-gray-300">
-                        {address?.slice(0, 6)}...{address?.slice(-4)}
-                    </div>
-                    <button 
-                        onClick={() => disconnect()}
-                        className="p-2 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-400 transition-colors"
-                        title="Disconnect"
-                    >
-                        <LogOut className="w-4 h-4" />
-                    </button>
-                </div>
-            ) : (
-                <button 
-                    onClick={() => connect({ connector: injected() })}
-                    className="px-6 py-2.5 rounded-full bg-primary text-primary-foreground font-medium hover:opacity-90 transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
-                >
-                    <Wallet className="w-4 h-4" />
-                    Connect Wallet
-                </button>
-            )}
+          <ConnectButton />
         </div>
       </div>
 
-      {/* Navigation */}
       <div className="w-full max-w-6xl px-6 mb-8">
         <div className="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
-            <button
-                onClick={() => setActiveTab('balances')}
-                className={cn(
-                    "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-                    activeTab === 'balances' 
-                        ? "bg-primary text-primary-foreground shadow-lg" 
-                        : "text-gray-400 hover:text-white hover:bg-white/5"
-                )}
-            >
-                <LayoutDashboard className="w-4 h-4" />
-                Balances
-            </button>
-            <button
-                onClick={() => setActiveTab('transfer')}
-                className={cn(
-                    "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-                    activeTab === 'transfer' 
-                        ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
-                        : "text-gray-400 hover:text-white hover:bg-white/5"
-                )}
-            >
-                <Send className="w-4 h-4" />
-                Transfer
-            </button>
-            <button
-                onClick={() => setActiveTab('deposit')}
-                className={cn(
-                    "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-                    activeTab === 'deposit' 
-                        ? "bg-blue-500 text-white shadow-lg shadow-blue-500/20" 
-                        : "text-gray-400 hover:text-white hover:bg-white/5"
-                )}
-            >
-                <ArrowDownCircle className="w-4 h-4" />
-                Deposit L2
-            </button>
+          <button
+            onClick={() => setActiveTab('balances')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'balances'
+                ? "bg-blue-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Balances
+          </button>
+          <button
+            onClick={() => setActiveTab('transfer')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'transfer'
+                ? "bg-green-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <Send className="w-4 h-4" />
+            Transfer
+          </button>
+          <button
+            onClick={() => setActiveTab('deposit')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'deposit'
+                ? "bg-cyan-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <ArrowDownCircle className="w-4 h-4" />
+            Deposit
+          </button>
+          <button
+            onClick={() => setActiveTab('withdraw')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'withdraw'
+                ? "bg-orange-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <ArrowUpCircle className="w-4 h-4" />
+            Withdraw
+          </button>
+          <button
+            onClick={() => setActiveTab('testing')}
+            className={cn(
+              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+              activeTab === 'testing'
+                ? "bg-purple-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Testing Results
+          </button>
         </div>
       </div>
-      
+
       {activeTab === 'balances' ? (
         <BalanceTable addresses={TEST_ADDRESSES} />
       ) : activeTab === 'transfer' ? (
         <TransferForm />
-      ) : (
+      ) : activeTab === 'deposit' ? (
         <DepositForm />
+      ) : activeTab === 'withdraw' ? (
+        <WithdrawForm />
+      ) : (
+        <TestingResults />
       )}
     </div>
   )
 }
 
+function AppContent() {
+  return (
+    <Dashboard />
+  )
+}
+
 function App() {
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <Dashboard />
-      </QueryClientProvider>
-    </WagmiProvider>
+    <QueryClientProvider client={queryClient}>
+      <WagmiProvider config={config}>
+        <RainbowKitProvider>
+          <AppContent />
+        </RainbowKitProvider>
+      </WagmiProvider>
+    </QueryClientProvider>
   )
 }
 

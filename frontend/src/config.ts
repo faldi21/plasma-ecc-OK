@@ -1,6 +1,6 @@
-import { http, createConfig } from 'wagmi'
 import { sepolia } from 'wagmi/chains'
 import { defineChain } from 'viem'
+import { getDefaultConfig } from '@rainbow-me/rainbowkit'
 
 export const plasmaL2 = defineChain({
   id: 31337,
@@ -15,10 +15,8 @@ export const plasmaL2 = defineChain({
   },
 })
 
-export const config = createConfig({
+export const config = getDefaultConfig({
+  appName: 'Plasma ECC Dashboard',
+  projectId: 'plasma-ecc-dashboard',
   chains: [sepolia, plasmaL2],
-  transports: {
-    [sepolia.id]: http(),
-    [plasmaL2.id]: http(),
-  },
 })

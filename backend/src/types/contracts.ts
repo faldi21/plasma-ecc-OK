@@ -179,4 +179,42 @@ export interface EnvConfig {
   L2_PLASMA_CHAIN_ADDRESS: Address;
   L2_PLASMA_TOKEN_ADDRESS: Address;
   PORT?: string;
+  // UTXO Contract Addresses
+  ROOT_CHAIN_UTXO_ADDRESS?: Address;
+  PLASMA_CHAIN_UTXO_ADDRESS?: Address;
+  PLASMA_CHAIN_UTXO_MERKLE_ADDRESS?: Address;  // Merkle baseline for benchmark
+}
+
+// UTXO Types
+export interface UTXO {
+  utxoId: Hex;
+  owner: Address;
+  token: Address;
+  amount: bigint;
+  createdInBlock: bigint;
+  spent: boolean;
+  exited: boolean;
+}
+
+export interface UTXODepositEvent {
+  utxoId: Hex;
+  user: Address;
+  token: Address;
+  amount: bigint;
+  depositNonce: bigint;
+}
+
+export interface UTXOTransferResult {
+  success: boolean;
+  txHash: Hex;
+  inputUtxoIds: Hex[];
+  outputUtxoIds: Hex[];
+}
+
+export interface UTXOExitResult {
+  success: boolean;
+  exitId: Hex;
+  utxoId: Hex;
+  amount: bigint;
+  exitTime: bigint;
 }

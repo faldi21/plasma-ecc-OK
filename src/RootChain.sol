@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./libraries/ECCAccumulator.sol";
 
@@ -42,8 +42,9 @@ contract RootChain is ReentrancyGuard, Ownable {
     ECCAccumulator.Accumulator private accumulator;
     
     uint256 public currentPlasmaBlock;
-    uint256 public constant EXIT_PERIOD = 7 days;
-    uint256 public constant CHALLENGE_PERIOD = 3 days;
+    // TESTING: Changed from 7 days to 7 minutes, 3 days to 4 minutes
+    uint256 public constant EXIT_PERIOD = 7 minutes;      // Total time for exit (was 7 days)
+    uint256 public constant CHALLENGE_PERIOD = 4 minutes; // Time when challenge closes (was 3 days)
     
     address public plasmaOperator;
     bool public isPlasmaActive;
@@ -104,8 +105,9 @@ contract RootChain is ReentrancyGuard, Ownable {
     ) external onlyOperator {
         currentPlasmaBlock++;
         
-        // Gunakan accumulator value yang dikirim oleh L2 operator (tidak perlu add lagi)
-        // Karena L2 sudah menghitung accumulator dengan benar
+        // Update contract accumulator dengan accumulator value dari L2
+        // Ini penting untuk verifikasi witness di startExit()
+        accumulator.value = accumulatorValue;
         
         plasmaBlocks[currentPlasmaBlock] = PlasmaBlock({
             blockNumber: currentPlasmaBlock,
@@ -130,10 +132,13 @@ contract RootChain is ReentrancyGuard, Ownable {
     ) external nonReentrant {
         require(amount > 0, "Invalid amount");
         require(blockNumber <= currentPlasmaBlock, "Invalid block");
-        
-        // Verifikasi transaksi menggunakan accumulator
+
+        // Get the accumulator value at the time of the block
+        ECCAccumulator.Point memory blockAccumulator = plasmaBlocks[blockNumber].accumulatorValue;
+
+        // Verifikasi transaksi menggunakan accumulator dari block tersebut
         require(
-            accumulator.verify(txHash, witness),
+            ECCAccumulator.verifyWithAccumulator(txHash, witness, blockAccumulator),
             "Invalid transaction proof"
         );
         

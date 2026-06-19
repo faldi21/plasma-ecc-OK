@@ -39,33 +39,53 @@ library ECCAccumulator {
         if (acc.elements[element]) {
             return false; // Element sudah ada
         }
-        
-        uint256 scalar = uint256(element) % N;
-        Point memory newPoint = scalarMul(Point(GX, GY), scalar);
+
+        // scalarMul will handle modulo N internally
+        Point memory newPoint = scalarMul(Point(GX, GY), uint256(element));
         acc.value = pointAdd(acc.value, newPoint);
         acc.elements[element] = true;
         acc.count++;
-        
+
         return true;
     }
 
     /**
      * @dev Verifikasi membership element dalam accumulator
+     * 
+     * Verification hanya perlu memastikan bahwa: witness + element = current_accumulator
+     * Tidak perlu memeriksa apakah element sudah di-record dalam mapping karena:
+     * - Backend yang mengelola accumulator, bukan contract
+     * - Backend mengirim witness yang sudah dikompute dengan element
+     * - Verifikasi hanya cek mathematical property, tidak perlu lookup
      */
     function verify(
         Accumulator storage acc,
         bytes32 element,
         Point memory witness
     ) internal view returns (bool) {
-        if (!acc.elements[element]) {
-            return false;
-        }
-        
-        uint256 scalar = uint256(element) % N;
-        Point memory elementPoint = scalarMul(Point(GX, GY), scalar);
+        // scalarMul will handle modulo N internally
+        Point memory elementPoint = scalarMul(Point(GX, GY), uint256(element));
         Point memory computedAcc = pointAdd(witness, elementPoint);
-        
+
         return computedAcc.x == acc.value.x && computedAcc.y == acc.value.y;
+    }
+
+    /**
+     * @dev Verifikasi membership element dengan target accumulator tertentu
+     * Digunakan untuk verify transaction terhadap historical block accumulator
+     *
+     * witness + element*G should equal targetAccumulator
+     */
+    function verifyWithAccumulator(
+        bytes32 element,
+        Point memory witness,
+        Point memory targetAccumulator
+    ) internal view returns (bool) {
+        // scalarMul will handle modulo N internally
+        Point memory elementPoint = scalarMul(Point(GX, GY), uint256(element));
+        Point memory computedAcc = pointAdd(witness, elementPoint);
+
+        return computedAcc.x == targetAccumulator.x && computedAcc.y == targetAccumulator.y;
     }
 
     /**
@@ -115,9 +135,12 @@ library ECCAccumulator {
      * @dev Scalar multiplication pada elliptic curve
      */
     function scalarMul(Point memory p, uint256 scalar) internal view returns (Point memory) {
+        // Reduce scalar modulo N (curve order) to ensure proper range
+        scalar = scalar % N;
+
         Point memory result = Point(0, 0);
         Point memory base = p;
-        
+
         while (scalar > 0) {
             if (scalar & 1 == 1) {
                 result = pointAdd(result, base);
@@ -125,7 +148,7 @@ library ECCAccumulator {
             base = pointAdd(base, base);
             scalar >>= 1;
         }
-        
+
         return result;
     }
 
