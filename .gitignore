@@ -13,7 +13,10 @@ docs/
 
 # Dotenv file
 .env
+
+# Markdown — allow README
 *.md
+!README.md
 node_modules
 wallet.txt
 .anvil-state.json

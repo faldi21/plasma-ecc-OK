@@ -31,6 +31,7 @@ export const envConfig: EnvConfig = {
   // UTXO Contract Addresses
   ROOT_CHAIN_UTXO_ADDRESS: getEnvVar('ROOT_CHAIN_UTXO_ADDRESS', false) as Address,
   PLASMA_CHAIN_UTXO_ADDRESS: getEnvVar('PLASMA_CHAIN_UTXO_ADDRESS', false) as Address,
+  PLASMA_CHAIN_UTXO_MERKLE_ADDRESS: getEnvVar('PLASMA_CHAIN_UTXO_MERKLE_ADDRESS', false) as Address,
 };
 
 export default envConfig;

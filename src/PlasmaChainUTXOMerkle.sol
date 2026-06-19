@@ -1,20 +1,30 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import "./libraries/ECCAccumulator.sol";
+import "./libraries/MerkleAccumulator.sol";
 
 /**
- * @title PlasmaChainUTXO
- * @dev Contract untuk mengelola state di Layer 2 dengan UTXO model
+ * @title PlasmaChainUTXOMerkle
+ * @dev Merkle-tree-accumulator variant of PlasmaChainUTXO. Used as baseline
+ *      for empirical comparison in research/benchmark contexts.
  *
- * UTXO Model:
+ * BENCHMARK BASELINE — identical to PlasmaChainUTXO except the cryptographic
+ * primitive backing the accumulator: this contract uses an incremental
+ * Merkle tree (OpenZeppelin), while PlasmaChainUTXO uses the ECC accumulator
+ * library based on elliptic curve cryptography.
+ *
+ * Key API differences from PlasmaChainUTXO:
+ *   - Block.accumulatorValue is `bytes32` (Merkle root) instead of `Point`
+ *   - getAccumulatorValue() returns `bytes32` instead of `Point memory`
+ *
+ * UTXO Model (identical to PlasmaChainUTXO):
  * - Setiap deposit dari L1 membuat UTXO baru
  * - Transfer consume input UTXOs dan create output UTXOs
  * - Total input HARUS sama dengan total output (no inflation)
  * - Mencegah double-spending dengan tracking spent status
  */
-contract PlasmaChainUTXO {
-    using ECCAccumulator for ECCAccumulator.Accumulator;
+contract PlasmaChainUTXOMerkle {
+    using MerkleAccumulator for MerkleAccumulator.Accumulator;
 
     // ============ STRUCTS ============
 
@@ -31,7 +41,7 @@ contract PlasmaChainUTXO {
     struct Block {
         uint256 blockNumber;
         bytes32[] utxoIds;      // List of UTXO IDs in this block
-        ECCAccumulator.Point accumulatorValue;
+        bytes32 accumulatorValue;   // Merkle root at the time of block creation
         uint256 timestamp;
     }
 
@@ -50,8 +60,8 @@ contract PlasmaChainUTXO {
     bytes32[] public pendingUtxos;
     uint256 public pendingProcessedCursor;  // tracks chunked createBlock progress
 
-    // Accumulator
-    ECCAccumulator.Accumulator private accumulator;
+    // Accumulator (Merkle tree variant)
+    MerkleAccumulator.Accumulator private accumulator;
 
     // Nonces for replay protection
     mapping(address => uint256) public nonces;
@@ -668,7 +678,7 @@ contract PlasmaChainUTXO {
             blocks[currentBlock] = Block({
                 blockNumber: currentBlock,
                 utxoIds: pendingUtxos,
-                accumulatorValue: accumulator.getValue(),
+                accumulatorValue: accumulator.getRoot(),
                 timestamp: block.timestamp
             });
             emit BlockCreated(currentBlock, pendingUtxos.length);
@@ -745,30 +755,35 @@ contract PlasmaChainUTXO {
     }
 
     /**
-     * @dev Get current accumulator value
+     * @dev Get current accumulator value (Merkle root)
      */
-    function getAccumulatorValue() external view returns (ECCAccumulator.Point memory) {
-        return accumulator.getValue();
+    function getAccumulatorValue() external view returns (bytes32) {
+        return accumulator.getRoot();
     }
 
     /**
      * @dev Isolated gas measurement entry point for membership-proof verification.
      * Wraps accumulator.verify and emits an event so a regular transaction
-     * (not eth_call) can be used to record receipt.gasUsed. Accepts any
-     * (element, witness) pair — verification gas cost is independent of
-     * validity for cryptographic operations of fixed structure.
+     * can record receipt.gasUsed. Verification gas cost is dominated by
+     * keccak256 path traversal (O(log n)) and independent of proof validity.
      *
-     * This function exists for benchmarking purposes only and does not
-     * affect protocol state.
+     * Benchmarking-only function; does not affect protocol state.
      */
     event VerifyMeasured(bytes32 indexed element, bool valid);
 
     function measureVerifyGas(
         bytes32 element,
-        ECCAccumulator.Point calldata witness
+        bytes32[] calldata proof
     ) external returns (bool valid) {
-        valid = accumulator.verify(element, witness);
+        valid = accumulator.verify(element, proof);
         emit VerifyMeasured(element, valid);
+    }
+
+    /**
+     * @dev Get accumulator element count (for benchmarking convenience)
+     */
+    function getAccumulatorCount() external view returns (uint256) {
+        return accumulator.getCount();
     }
 
     /**

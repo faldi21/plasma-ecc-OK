@@ -96,7 +96,12 @@ interface TpsStatus {
 interface TpsHistoryEntry {
   id?: string
   label?: string
-  config?: { totalTransactions: number; concurrency: number; amountPerTx: string }
+  config?: {
+    totalTransactions: number
+    concurrency: number
+    amountPerTx: string
+    mode?: 'ecc' | 'merkle'
+  }
   totalTransactions: number
   successfulTransactions: number
   failedTransactions: number
@@ -106,6 +111,38 @@ interface TpsHistoryEntry {
   maxLatency: number
   durationMs: number
   timestamp: number
+}
+
+interface AveragedTpsHistoryEntry {
+  totalTransactions: number
+  tps: number
+  avgLatency: number
+  durationMs: number
+}
+
+const averageTpsHistoryByTotalTransactions = (
+  history: TpsHistoryEntry[],
+  mode: 'ecc' | 'merkle',
+): AveragedTpsHistoryEntry[] => {
+  const grouped = new Map<number, TpsHistoryEntry[]>()
+
+  history
+    .filter(r => (r.config?.mode ?? 'ecc') === mode)
+    .forEach(r => {
+      const totalTransactions = r.config?.totalTransactions ?? r.totalTransactions
+      const runs = grouped.get(totalTransactions) ?? []
+      runs.push(r)
+      grouped.set(totalTransactions, runs)
+    })
+
+  return Array.from(grouped.entries())
+    .map(([totalTransactions, runs]) => ({
+      totalTransactions,
+      tps: runs.reduce((sum, r) => sum + r.tps, 0) / runs.length,
+      durationMs: runs.reduce((sum, r) => sum + r.durationMs, 0) / runs.length,
+      avgLatency: runs.reduce((sum, r) => sum + r.avgLatency, 0) / runs.length,
+    }))
+    .sort((a, b) => a.totalTransactions - b.totalTransactions)
 }
 
 const INITIAL_STATUS: TpsStatus = {
@@ -129,6 +166,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
   const [createBlockEvery, setCreateBlockEvery] = useState(0)
   const [revertAfter, setRevertAfter] = useState(true)
   const [flushPendingChunkSize, setFlushPendingChunkSize] = useState(0)
+  const [mode, setMode] = useState<'ecc' | 'merkle'>('ecc')
   const [tpsStatus, setTpsStatus] = useState<TpsStatus>(INITIAL_STATUS)
   const [startError, setStartError] = useState<string | null>(null)
   const pollingRef = useRef<number | null>(null)
@@ -190,7 +228,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
       const res = await fetch(`${apiBase}/api/test/tps/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize }),
+        body: JSON.stringify({ totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize, mode }),
       })
       const data = await res.json()
       if (!data.success) {
@@ -318,6 +356,21 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
             </div>
 
             <div className="border-t border-slate-700/50 pt-4">
+              <div className="mb-4 bg-slate-900/50 border border-slate-700 rounded-md p-3 flex items-center gap-3">
+                <label className="text-xs text-gray-400 whitespace-nowrap">Accumulator (paper baseline):</label>
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as 'ecc' | 'merkle')}
+                  disabled={isActive}
+                  className="bg-slate-800 border border-slate-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="ecc">ECC Accumulator (paper proposal)</option>
+                  <option value="merkle">Merkle Tree (baseline comparison)</option>
+                </select>
+                <span className={`text-xs px-2 py-0.5 rounded ${mode === 'ecc' ? 'bg-purple-900/40 text-purple-300' : 'bg-blue-900/40 text-blue-300'}`}>
+                  {mode === 'ecc' ? 'PlasmaChainUTXO' : 'PlasmaChainUTXOMerkle'}
+                </span>
+              </div>
               <p className="text-xs font-semibold text-purple-300 mb-2 uppercase tracking-wide">Performance Tuning (Plasma-UTXO-ECC v2)</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
@@ -571,6 +624,592 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
   )
 }
 
+// ============ PAPER COMPARISON TABLES (Table 2, 3, 4 untuk paper IEEE) ============
+
+interface AggregatedGas {
+  mean: string   // bigint serialized
+  std: string    // float as string
+  min: string
+  max: string
+  runs: number
+  samples: string[]
+}
+
+interface CalibrationResult {
+  mode: 'ecc' | 'merkle'
+  contractAddress: string
+  deposit: AggregatedGas
+  transfer: AggregatedGas
+  withdrawal: AggregatedGas
+  blockSubmission: AggregatedGas
+  blockPendingTarget: number
+  runs: number
+  baseline: string
+}
+
+interface CalibrationData {
+  timestamp: number
+  runs: number
+  blockPendingTarget: number
+  ecc: CalibrationResult
+  merkle: CalibrationResult
+}
+
+interface ProofSizeValidationResult {
+  n: number
+  merkleMeasured: number
+  merkleTheoretical: number
+  merkleMatch: boolean
+  eccMeasured: number
+  eccTheoretical: number
+  eccMatch: boolean
+  reductionPercent: number
+  treeDepth: number
+}
+
+function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
+  const apiBase = getBackendApiUrl()
+  const [calibration, setCalibration] = useState<CalibrationData | null>(null)
+  const [calibrationLoading, setCalibrationLoading] = useState(false)
+  const [calibrationError, setCalibrationError] = useState<string | null>(null)
+  const [calibrationRuns, setCalibrationRuns] = useState(10)
+  const [calibrationBlockN, setCalibrationBlockN] = useState(100)
+  const [verifyGas, setVerifyGas] = useState<any>(null)
+  const [verifyGasLoading, setVerifyGasLoading] = useState(false)
+  const [verifyGasError, setVerifyGasError] = useState<string | null>(null)
+  const [verifyRuns, setVerifyRuns] = useState(10)
+  const [empirical, setEmpirical] = useState<{ results: ProofSizeValidationResult[]; timestamp: number } | null>(null)
+  const [empiricalLoading, setEmpiricalLoading] = useState(false)
+
+  // Load latest calibration on mount
+  useEffect(() => {
+    fetch(`${apiBase}/api/test/calibration/latest`)
+      .then(r => r.json())
+      .then(d => { if (d.success && d.data) setCalibration(d.data) })
+      .catch(() => {})
+  }, [])
+
+  // Load latest verify-gas measurement on mount
+  useEffect(() => {
+    fetch(`${apiBase}/api/test/verify-gas/latest`)
+      .then(r => r.json())
+      .then(d => { if (d.success && d.data) setVerifyGas(d.data) })
+      .catch(() => {})
+  }, [])
+
+  const runVerifyGas = async () => {
+    setVerifyGasError(null); setVerifyGasLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/api/test/verify-gas/run?runs=${verifyRuns}`, { method: 'POST' })
+      const data = await res.json()
+      if (!data.success) { setVerifyGasError(data.error || 'Verify-gas failed'); return }
+      setVerifyGas(data.data)
+    } catch (err: any) {
+      setVerifyGasError(err.message || 'Network error')
+    } finally {
+      setVerifyGasLoading(false)
+    }
+  }
+
+  // Auto-run empirical proof size validation on mount (cheap, deterministic)
+  useEffect(() => {
+    setEmpiricalLoading(true)
+    fetch(`${apiBase}/api/test/proof-size-validation?ns=10,100,500,1000`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setEmpirical(d.data) })
+      .catch(() => {})
+      .finally(() => setEmpiricalLoading(false))
+  }, [])
+
+  const reRunEmpirical = () => {
+    setEmpiricalLoading(true)
+    fetch(`${apiBase}/api/test/proof-size-validation?ns=10,100,500,1000`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setEmpirical(d.data) })
+      .catch(() => {})
+      .finally(() => setEmpiricalLoading(false))
+  }
+
+  const runCalibration = async () => {
+    setCalibrationError(null)
+    setCalibrationLoading(true)
+    try {
+      const res = await fetch(`${apiBase}/api/test/calibration/run?runs=${calibrationRuns}&blockPending=${calibrationBlockN}`, { method: 'POST' })
+      const data = await res.json()
+      if (!data.success) {
+        setCalibrationError(data.error || 'Calibration failed')
+        return
+      }
+      setCalibration(data.data)
+    } catch (err: any) {
+      setCalibrationError(err.message || 'Network error')
+    } finally {
+      setCalibrationLoading(false)
+    }
+  }
+
+  // ===== TABLE 2: Proof Size (computed) =====
+  const setSizes = [10, 100, 500, 1000]
+  const proofSize = setSizes.map(n => {
+    const merkleBytes = 32 * Math.ceil(Math.log2(n))
+    const eccBytes = 64
+    const reduction = ((merkleBytes - eccBytes) / merkleBytes) * 100
+    return { n, merkleBytes, eccBytes, reduction }
+  })
+
+  // ===== TABLE 3: Gas Cost (measured, mean ± std) =====
+  const fmtGas = (s: string) => {
+    const n = Number(s)
+    if (!isFinite(n) || n === 0) return '—'
+    return n.toLocaleString()
+  }
+  const fmtAggGas = (agg: AggregatedGas | undefined) => {
+    if (!agg || !agg.mean || agg.mean === '0') return null
+    const mean = Number(agg.mean)
+    const std = Number(agg.std)
+    if (!isFinite(mean) || mean === 0) return null
+    return { meanStr: mean.toLocaleString(), stdStr: std.toLocaleString(undefined, { maximumFractionDigits: 0 }) }
+  }
+  const savings = (eccStr: string, merkleStr: string) => {
+    const e = Number(eccStr), m = Number(merkleStr)
+    if (!isFinite(e) || !isFinite(m) || e === 0 || m === 0) return '—'
+    return `${(((e - m) / e) * 100).toFixed(1)}%`
+  }
+
+  // ===== TABLE 4: Throughput (averaged from all saved history, grouped by T) =====
+  const eccRuns = averageTpsHistoryByTotalTransactions(history, 'ecc')
+  const merkleRuns = averageTpsHistoryByTotalTransactions(history, 'merkle')
+
+  // Export helpers (LaTeX format for paper)
+  const exportTablesLatex = () => {
+    let out = '% --- TABLE 2: Membership-Proof Size Comparison ---\n'
+    out += '% Theoretical and empirically measured (build Merkle tree + generate proof).\n'
+    out += '\\begin{tabular}{lcccc}\n\\toprule\nSet size $n$ & 10 & 100 & 500 & 1000 \\\\\n\\midrule\n'
+    out += 'Merkle tree theoretical (bytes) & ' + proofSize.map(r => r.merkleBytes).join(' & ') + ' \\\\\n'
+    if (empirical) {
+      out += 'Merkle tree measured (bytes) & ' + empirical.results.map(r => r.merkleMeasured).join(' & ') + ' \\\\\n'
+    }
+    out += 'ECC accumulator theoretical (bytes) & ' + proofSize.map(r => r.eccBytes).join(' & ') + ' \\\\\n'
+    if (empirical) {
+      out += 'ECC accumulator measured (bytes) & ' + empirical.results.map(r => r.eccMeasured).join(' & ') + ' \\\\\n'
+    }
+    out += '\\midrule\nReduction (\\%) & ' + proofSize.map(r => r.reduction.toFixed(1)).join(' & ') + ' \\\\\n'
+    out += '\\bottomrule\n\\end{tabular}\n\n'
+
+    if (calibration) {
+      out += `% --- TABLE 3: Gas Cost per Operation (mean ± std, N=${calibration.runs} runs, fixed n=${calibration.blockPendingTarget} for block submission) ---\n`
+      out += '\\begin{tabular}{lrrr}\n\\toprule\nOperation & Merkle (gas) & ECC Acc. (gas) & Savings \\\\\n\\midrule\n'
+      const aggFmt = (a: AggregatedGas) => `${Number(a.mean).toLocaleString('en-US').replace(/,/g, '{,}')} $\\pm$ ${Math.round(Number(a.std)).toLocaleString('en-US').replace(/,/g, '{,}')}`
+      const rows = [
+        { op: 'Deposit (L1$\\to$L2)', ecc: calibration.ecc.deposit, mer: calibration.merkle.deposit },
+        { op: 'Transfer (L2)', ecc: calibration.ecc.transfer, mer: calibration.merkle.transfer },
+        { op: 'Withdrawal (L2$\\to$L1)', ecc: calibration.ecc.withdrawal, mer: calibration.merkle.withdrawal },
+        { op: `Block submission ($n{=}${calibration.blockPendingTarget}$)`, ecc: calibration.ecc.blockSubmission, mer: calibration.merkle.blockSubmission },
+      ]
+      for (const r of rows) {
+        out += `${r.op} & ${aggFmt(r.mer)} & ${aggFmt(r.ecc)} & ${savings(r.ecc.mean, r.mer.mean)} \\\\\n`
+      }
+      out += '\\bottomrule\n\\end{tabular}\n\n'
+      out += `% Baseline: ${calibration.ecc.baseline}\n`
+      out += `% Measured: ${new Date(calibration.timestamp).toISOString()}\n`
+    }
+
+    const blob = new Blob([out], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `paper-tables-${Date.now()}.tex`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <Card className="bg-gradient-to-br from-indigo-950/30 to-slate-900/50 border-indigo-800/40">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="w-5 h-5 text-indigo-400" />
+              Paper Comparison Tables (Table 2-4)
+            </CardTitle>
+            <CardDescription>
+              Data lengkap untuk membership-proof size, gas cost per operation, dan throughput comparison
+            </CardDescription>
+          </div>
+          <button
+            onClick={exportTablesLatex}
+            disabled={!calibration && proofSize.length === 0}
+            className="bg-indigo-700 hover:bg-indigo-600 disabled:bg-slate-700 text-sm px-3 py-1.5 rounded-md flex items-center gap-1"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export LaTeX
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* === Table 2 — Theoretical + Empirical === */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+              TABLE 2 — Membership-Proof Size Comparison (theoretical + empirical)
+            </h4>
+            <button
+              onClick={reRunEmpirical}
+              disabled={empiricalLoading}
+              className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 text-xs px-3 py-1.5 rounded-md flex items-center gap-1"
+            >
+              <RotateCw className={`w-3 h-3 ${empiricalLoading ? 'animate-spin' : ''}`} />
+              Re-run measurement
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-left">
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400">Set size n</th>
+                  {setSizes.map(n => (
+                    <th key={n} className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">{n}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {/* Merkle theoretical */}
+                <tr className="border-b border-slate-800">
+                  <td className="py-2 px-3 text-gray-300">Merkle <span className="text-gray-500 text-xs">(theoretical)</span></td>
+                  {proofSize.map(r => (
+                    <td key={r.n} className="py-2 px-3 text-right text-gray-300">{r.merkleBytes}</td>
+                  ))}
+                </tr>
+                {/* Merkle measured */}
+                <tr className="border-b border-slate-700">
+                  <td className="py-2 px-3 text-blue-300">Merkle <span className="text-blue-400 text-xs font-semibold">(measured)</span></td>
+                  {setSizes.map(n => {
+                    const m = empirical?.results.find(r => r.n === n)
+                    const theoretical = proofSize.find(r => r.n === n)?.merkleBytes
+                    return (
+                      <td key={n} className="py-2 px-3 text-right">
+                        {m ? (
+                          <span className={m.merkleMeasured === theoretical ? 'text-blue-300 font-semibold' : 'text-yellow-400'}>
+                            {m.merkleMeasured} {m.merkleMeasured === theoretical && <span className="text-green-400 ml-1">✓</span>}
+                          </span>
+                        ) : <span className="text-gray-600">—</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+                {/* ECC theoretical */}
+                <tr className="border-b border-slate-800">
+                  <td className="py-2 px-3 text-gray-300">ECC <span className="text-gray-500 text-xs">(theoretical)</span></td>
+                  {proofSize.map(r => (
+                    <td key={r.n} className="py-2 px-3 text-right text-gray-300">{r.eccBytes}</td>
+                  ))}
+                </tr>
+                {/* ECC measured */}
+                <tr className="border-b border-slate-700">
+                  <td className="py-2 px-3 text-purple-300">ECC <span className="text-purple-400 text-xs font-semibold">(measured)</span></td>
+                  {setSizes.map(n => {
+                    const m = empirical?.results.find(r => r.n === n)
+                    return (
+                      <td key={n} className="py-2 px-3 text-right">
+                        {m ? (
+                          <span className={m.eccMeasured === 64 ? 'text-purple-300 font-semibold' : 'text-yellow-400'}>
+                            {m.eccMeasured} {m.eccMeasured === 64 && <span className="text-green-400 ml-1">✓</span>}
+                          </span>
+                        ) : <span className="text-gray-600">—</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+                <tr className="border-t-2 border-slate-700">
+                  <td className="py-2 px-3 font-semibold">Reduction (%)</td>
+                  {proofSize.map(r => (
+                    <td key={r.n} className="py-2 px-3 text-right text-green-400 font-bold">{r.reduction.toFixed(1)}%</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            <span className="font-semibold text-gray-400">Theoretical</span>: Merkle = 32 × ⌈log₂(n)⌉ bytes (tight tree). ECC = 64 bytes constant (single EC point: x, y).
+            {empirical && (
+              <>
+                {' '}
+                <span className="font-semibold text-gray-400">Empirical</span>: built actual Merkle trees with random leaves, generated proof for leaf[0], serialized witness for ECC.
+                Measured {new Date(empirical.timestamp).toLocaleString()}.
+                {empirical.results.every(r => r.merkleMatch && r.eccMatch) && (
+                  <span className="text-green-400 ml-1 font-semibold">All values match formulas ✓ (empirically validated)</span>
+                )}
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* === Table 3 === */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+              TABLE 3 — Gas Cost per Operation
+            </h4>
+            <button
+              onClick={runCalibration}
+              disabled={calibrationLoading}
+              className="bg-purple-700 hover:bg-purple-600 disabled:bg-slate-700 text-xs px-3 py-1.5 rounded-md flex items-center gap-1"
+            >
+              {calibrationLoading ? (
+                <><RotateCw className="w-3 h-3 animate-spin" /> Running calibration...</>
+              ) : (
+                <><Play className="w-3 h-3" /> Run Calibration</>
+              )}
+            </button>
+          </div>
+          {/* Calibration config controls */}
+          <div className="bg-slate-900/40 border border-slate-700 rounded-md p-3 mb-3 flex flex-wrap items-center gap-4 text-xs">
+            <label className="flex items-center gap-2">
+              <span className="text-gray-400">Runs (N):</span>
+              <input
+                type="number" min={1} max={50}
+                value={calibrationRuns}
+                onChange={(e) => setCalibrationRuns(parseInt(e.target.value) || 1)}
+                disabled={calibrationLoading}
+                className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-right"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-gray-400">Block pending (fixed n):</span>
+              <input
+                type="number" min={1} max={500}
+                value={calibrationBlockN}
+                onChange={(e) => setCalibrationBlockN(parseInt(e.target.value) || 1)}
+                disabled={calibrationLoading}
+                className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-right"
+              />
+            </label>
+            <span className="text-gray-500 text-xs">
+              Total tx ≈ {calibrationRuns * 2 * (3 + calibrationBlockN + 4)} (both modes). Est. {(calibrationRuns * 2 * (3 + calibrationBlockN + 4) * 0.05).toFixed(0)}s
+            </span>
+          </div>
+          {calibrationError && (
+            <div className="bg-red-950/40 border border-red-800 rounded-md p-2 text-xs text-red-300 mb-2">
+              {calibrationError}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-left">
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400">Operation</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">Merkle (gas, mean ± std)</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">ECC Acc. (gas, mean ± std)</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">Savings</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { op: 'Deposit (L1→L2)', mer: calibration?.merkle.deposit, ecc: calibration?.ecc.deposit },
+                  { op: 'Transfer (L2)', mer: calibration?.merkle.transfer, ecc: calibration?.ecc.transfer },
+                  { op: 'Withdrawal (L2→L1)', mer: calibration?.merkle.withdrawal, ecc: calibration?.ecc.withdrawal },
+                  { op: `Block submission (n=${calibration?.blockPendingTarget || calibrationBlockN} pending)`, mer: calibration?.merkle.blockSubmission, ecc: calibration?.ecc.blockSubmission },
+                ].map(row => {
+                  const mFmt = fmtAggGas(row.mer)
+                  const eFmt = fmtAggGas(row.ecc)
+                  return (
+                    <tr key={row.op} className="border-b border-slate-800">
+                      <td className="py-2 px-3 text-gray-300">{row.op}</td>
+                      <td className="py-2 px-3 text-right">
+                        {mFmt ? (
+                          <span>
+                            {mFmt.meanStr}
+                            <span className="text-gray-500 ml-1">± {mFmt.stdStr}</span>
+                          </span>
+                        ) : <span className="text-gray-600">— (run calibration)</span>}
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        {eFmt ? (
+                          <span>
+                            {eFmt.meanStr}
+                            <span className="text-gray-500 ml-1">± {eFmt.stdStr}</span>
+                          </span>
+                        ) : <span className="text-gray-600">—</span>}
+                      </td>
+                      <td className="py-2 px-3 text-right text-green-400 font-semibold">
+                        {row.ecc && row.mer ? savings(row.ecc.mean, row.mer.mean) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          {calibration && (
+            <div className="text-xs text-gray-500 mt-2 space-y-1">
+              <p>
+                Measured: {new Date(calibration.timestamp).toLocaleString()}.
+                Calibration uses evm_snapshot/revert per measurement (isolated state).
+                Block submission diukur dengan <b>n = {calibration.blockPendingTarget}</b> pending UTXOs (fixed).
+              </p>
+              <p>
+                <b>N = {calibration.runs} runs</b> per operation. Std deviation in gas units. Min/max samples preserved in API response for reproducibility.
+              </p>
+              <p className="text-gray-600">
+                Baseline: {calibration.ecc.baseline}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* === Table 3b — Isolated Verify-Step Gas === */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+              TABLE 3b — Isolated Verify-Step Gas (per witness check)
+            </h4>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-400">Runs:</label>
+              <input
+                type="number" min={1} max={50}
+                value={verifyRuns}
+                onChange={(e) => setVerifyRuns(parseInt(e.target.value) || 1)}
+                disabled={verifyGasLoading}
+                className="w-14 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-right text-xs"
+              />
+              <button
+                onClick={runVerifyGas}
+                disabled={verifyGasLoading}
+                className="bg-purple-700 hover:bg-purple-600 disabled:bg-slate-700 text-xs px-3 py-1.5 rounded-md flex items-center gap-1"
+              >
+                {verifyGasLoading ? (
+                  <><RotateCw className="w-3 h-3 animate-spin" /> Measuring...</>
+                ) : (
+                  <><Play className="w-3 h-3" /> Measure Verify Gas</>
+                )}
+              </button>
+            </div>
+          </div>
+          {verifyGasError && (
+            <div className="bg-red-950/40 border border-red-800 rounded-md p-2 text-xs text-red-300 mb-2">
+              {verifyGasError}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-left">
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400">Operation</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">Merkle (gas, mean ± std)</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">ECC Acc. (gas, mean ± std)</th>
+                  <th className="py-2 px-3 font-semibold text-xs text-gray-400 text-right">Ratio (ECC/Merkle)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-slate-800">
+                  <td className="py-2 px-3 text-gray-300">Witness verify (isolated)</td>
+                  <td className="py-2 px-3 text-right">
+                    {verifyGas?.merkle?.meanGas ? (
+                      <span>
+                        {Number(verifyGas.merkle.meanGas).toLocaleString()}
+                        <span className="text-gray-500 ml-1">± {Math.round(Number(verifyGas.merkle.stdGas)).toLocaleString()}</span>
+                      </span>
+                    ) : <span className="text-gray-600">— (run measurement)</span>}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {verifyGas?.ecc?.meanGas ? (
+                      <span>
+                        {Number(verifyGas.ecc.meanGas).toLocaleString()}
+                        <span className="text-gray-500 ml-1">± {Math.round(Number(verifyGas.ecc.stdGas)).toLocaleString()}</span>
+                      </span>
+                    ) : <span className="text-gray-600">—</span>}
+                  </td>
+                  <td className="py-2 px-3 text-right text-yellow-300 font-semibold">
+                    {verifyGas?.ecc?.meanGas && verifyGas?.merkle?.meanGas
+                      ? `${(Number(verifyGas.ecc.meanGas) / Number(verifyGas.merkle.meanGas)).toFixed(1)}×`
+                      : '—'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {verifyGas && (
+            <p className="text-xs text-gray-500 mt-2">
+              N = <b>{verifyGas.runs} runs</b> per mode, evm_snapshot/revert per measurement.
+              Merkle proof length = <b>{verifyGas.merkleProofLength}</b> hashes (matches on-chain tree depth).
+              Random non-trivial inputs used (gas cost structurally independent of validity for fixed-shape cryptographic operations).
+              Measured: {new Date(verifyGas.timestamp).toLocaleString()}.
+            </p>
+          )}
+        </div>
+
+        {/* === Table 4 === */}
+        <div>
+          <h4 className="text-sm font-semibold text-indigo-300 mb-2 uppercase tracking-wide">
+            TABLE 4 — Throughput and Latency Comparison
+          </h4>
+          <p className="text-xs text-gray-500 mb-2">
+            Average of all saved benchmark history, grouped by total transactions (T).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* ECC */}
+            <div>
+              <p className="text-xs font-semibold text-purple-300 mb-1">ECC Accumulator</p>
+              {eccRuns.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">No ECC runs yet</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-700">
+                      <th className="py-1 px-2 text-left">T</th>
+                      <th className="py-1 px-2 text-right">TPS</th>
+                      <th className="py-1 px-2 text-right">Dur</th>
+                      <th className="py-1 px-2 text-right">Lat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eccRuns.map(r => (
+                      <tr key={r.totalTransactions} className="border-b border-slate-800">
+                        <td className="py-1 px-2">{r.totalTransactions}</td>
+                        <td className="py-1 px-2 text-right font-bold text-purple-300">{fix(r.tps, 0)}</td>
+                        <td className="py-1 px-2 text-right">{fix((r.durationMs || 0) / 1000, 2)}s</td>
+                        <td className="py-1 px-2 text-right">{fix(r.avgLatency, 0)}ms</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {/* Merkle */}
+            <div>
+              <p className="text-xs font-semibold text-blue-300 mb-1">Merkle Baseline</p>
+              {merkleRuns.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">No Merkle runs yet — run benchmark dengan mode=Merkle</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-700">
+                      <th className="py-1 px-2 text-left">T</th>
+                      <th className="py-1 px-2 text-right">TPS</th>
+                      <th className="py-1 px-2 text-right">Dur</th>
+                      <th className="py-1 px-2 text-right">Lat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {merkleRuns.map(r => (
+                      <tr key={r.totalTransactions} className="border-b border-slate-800">
+                        <td className="py-1 px-2">{r.totalTransactions}</td>
+                        <td className="py-1 px-2 text-right font-bold text-blue-300">{fix(r.tps, 0)}</td>
+                        <td className="py-1 px-2 text-right">{fix((r.durationMs || 0) / 1000, 2)}s</td>
+                        <td className="py-1 px-2 text-right">{fix(r.avgLatency, 0)}ms</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function TpsHistoryTable({ history, refreshing, onRefresh }: { history: TpsHistoryEntry[]; refreshing: boolean; onRefresh: () => void }) {
   const apiBase = getBackendApiUrl()
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -806,6 +1445,9 @@ export function TestingResults() {
 
       {/* Live TPS Benchmark */}
       <LiveTpsBenchmark onHistoryChange={fetchHistory} />
+
+      {/* Paper IEEE comparison tables (Table 2, 3, 4) */}
+      <PaperComparisonTables history={history} />
 
       {/* Benchmark History */}
       <TpsHistoryTable history={history} refreshing={historyRefreshing} onRefresh={fetchHistory} />

@@ -66,20 +66,8 @@
       },
       {
         "name": "accumulatorValue",
-        "type": "tuple",
-        "internalType": "struct ECCAccumulator.Point",
-        "components": [
-          {
-            "name": "x",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "y",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "timestamp",
@@ -209,25 +197,26 @@
   },
   {
     "type": "function",
+    "name": "getAccumulatorCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAccumulatorValue",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "tuple",
-        "internalType": "struct ECCAccumulator.Point",
-        "components": [
-          {
-            "name": "x",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "y",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -246,7 +235,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct PlasmaChainUTXO.Block",
+        "internalType": "struct PlasmaChainUTXOMerkle.Block",
         "components": [
           {
             "name": "blockNumber",
@@ -260,20 +249,8 @@
           },
           {
             "name": "accumulatorValue",
-            "type": "tuple",
-            "internalType": "struct ECCAccumulator.Point",
-            "components": [
-              {
-                "name": "x",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "y",
-                "type": "uint256",
-                "internalType": "uint256"
-              }
-            ]
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "timestamp",
@@ -374,7 +351,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct PlasmaChainUTXO.UTXO",
+        "internalType": "struct PlasmaChainUTXOMerkle.UTXO",
         "components": [
           {
             "name": "utxoId",
@@ -426,21 +403,9 @@
         "internalType": "bytes32"
       },
       {
-        "name": "witness",
-        "type": "tuple",
-        "internalType": "struct ECCAccumulator.Point",
-        "components": [
-          {
-            "name": "x",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "y",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
       }
     ],
     "outputs": [

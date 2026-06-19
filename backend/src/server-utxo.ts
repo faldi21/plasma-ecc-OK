@@ -5,6 +5,9 @@ import { dirname, resolve } from 'path';
 import { envConfig } from './config/env.js';
 import { getPlasmaServiceUTXO, type SerializedPlasmaState } from './plasma/PlasmaServiceUTXO.js';
 import { tpsRunner, type TpsTestConfig } from './plasma/TpsTestRunner.js';
+import { runFullCalibration } from './plasma/CryptoCalibration.js';
+import { runProofSizeValidation } from './plasma/ProofSizeValidator.js';
+import { runFullVerifyGasMeasurement } from './plasma/VerifyGasMeasurement.js';
 import type { Address, Hex } from 'viem';
 
 const app = express();
@@ -660,7 +663,7 @@ app.get('/api/persistence/export', (req: Request, res: Response) => {
 
 app.post('/api/test/tps/start', async (req: Request, res: Response) => {
   try {
-    const { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize } = req.body as Partial<TpsTestConfig>;
+    const { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize, mode } = req.body as Partial<TpsTestConfig>;
 
     if (!totalTransactions || !concurrency || !amountPerTx) {
       return res.status(400).json({
@@ -690,7 +693,11 @@ app.post('/api/test/tps/start', async (req: Request, res: Response) => {
       });
     }
 
-    const config: TpsTestConfig = { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize };
+    if (mode && mode !== 'ecc' && mode !== 'merkle') {
+      return res.status(400).json({ success: false, error: "mode must be 'ecc' or 'merkle'" });
+    }
+
+    const config: TpsTestConfig = { totalTransactions, concurrency, amountPerTx, batchSize, createBlockEvery, revertAfter, flushPendingChunkSize, mode };
     await tpsRunner.start(config);
     res.json({ success: true, message: 'TPS test started', config });
   } catch (error: any) {
@@ -727,6 +734,93 @@ app.get('/api/test/tps/history', (_req: Request, res: Response) => {
   }
 });
 
+// Multi-run wrapper: runs the same TPS config N times sequentially.
+// Each run produces a separate history entry; aggregate stats computed at end.
+let multiRunInProgress = false;
+let multiRunProgress: { current: number; total: number; runs: any[]; config: any } | null = null;
+
+app.post('/api/test/tps/start-multi', async (req: Request, res: Response) => {
+  if (multiRunInProgress) {
+    return res.status(409).json({ success: false, error: 'Multi-run already in progress' });
+  }
+  const cfg = req.body as Partial<TpsTestConfig> & { repeats?: number; labelPrefix?: string };
+  const repeats = Math.max(1, Math.min(50, Math.floor(cfg.repeats ?? 10)));
+  const labelPrefix = cfg.labelPrefix || `multirun-${cfg.mode || 'ecc'}-t${cfg.totalTransactions}`;
+  if (!cfg.totalTransactions || !cfg.concurrency || !cfg.amountPerTx) {
+    return res.status(400).json({ success: false, error: 'Missing required TPS config fields' });
+  }
+  multiRunInProgress = true;
+  multiRunProgress = { current: 0, total: repeats, runs: [], config: cfg };
+
+  // Respond immediately, run in background
+  res.json({ success: true, message: 'Multi-run started in background', repeats });
+
+  (async () => {
+    const INTER_RUN_DELAY_MS = 1500;  // give Anvil/backend breathing room between runs
+    const MAX_POLL_MS = 180_000;       // hard ceiling: bail if a single run exceeds 3 min
+    try {
+      for (let i = 0; i < repeats; i++) {
+        const single: TpsTestConfig = {
+          totalTransactions: cfg.totalTransactions!,
+          concurrency: cfg.concurrency!,
+          amountPerTx: cfg.amountPerTx!,
+          batchSize: cfg.batchSize,
+          createBlockEvery: cfg.createBlockEvery,
+          revertAfter: cfg.revertAfter,
+          flushPendingChunkSize: cfg.flushPendingChunkSize,
+          mode: cfg.mode,
+        };
+        try {
+          await tpsRunner.start(single);
+        } catch (startErr: any) {
+          console.warn(`[MultiRun] start() failed at ${i + 1}/${repeats}:`, startErr.message);
+          await new Promise(r => setTimeout(r, INTER_RUN_DELAY_MS));
+          continue;
+        }
+        // Poll until done OR max poll time reached (bail-out safeguard)
+        const pollStart = Date.now();
+        while (true) {
+          const st = tpsRunner.getStatus().status;
+          if (st === 'complete' || st === 'error') break;
+          if (Date.now() - pollStart > MAX_POLL_MS) {
+            console.error(`[MultiRun] ${i + 1}/${repeats} EXCEEDED MAX POLL TIME — abandoning, requesting stop`);
+            tpsRunner.stop();
+            await new Promise(r => setTimeout(r, 2000));
+            break;
+          }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        const result = tpsRunner.getStatus().result;
+        if (result?.id) {
+          tpsRunner.setLabel(result.id, `${labelPrefix}-r${i + 1}`);
+        }
+        multiRunProgress!.runs.push(result);
+        multiRunProgress!.current = i + 1;
+        const tps = result?.tps ?? 0;
+        const status = tpsRunner.getStatus().status;
+        console.log(`[MultiRun] ${i + 1}/${repeats} ${status === 'complete' ? '✓' : '✗'} TPS=${tps.toFixed(2)}`);
+
+        // Inter-run delay — let Anvil/backend recover before next iteration
+        if (i < repeats - 1) {
+          await new Promise(r => setTimeout(r, INTER_RUN_DELAY_MS));
+        }
+      }
+    } catch (err: any) {
+      console.error('[MultiRun] fatal error:', err.message);
+    } finally {
+      multiRunInProgress = false;
+    }
+  })();
+});
+
+app.get('/api/test/tps/start-multi/status', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    inProgress: multiRunInProgress,
+    progress: multiRunProgress,
+  });
+});
+
 app.patch('/api/test/tps/history/:id', (req: Request, res: Response) => {
   try {
     const { id } = req.params as { id: string };
@@ -756,6 +850,102 @@ app.delete('/api/test/tps/history', (_req: Request, res: Response) => {
     tpsRunner.clearHistory();
     res.json({ success: true });
   } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ CRYPTO CALIBRATION (paper Table 3 data) ============
+
+let calibrationCache: { timestamp: number; data: any } | null = null;
+let calibrationInProgress = false;
+
+app.post('/api/test/calibration/run', async (req: Request, res: Response) => {
+  if (calibrationInProgress) {
+    return res.status(409).json({ success: false, error: 'Calibration already running' });
+  }
+  if (tpsRunner.getStatus().status === 'funding' || tpsRunner.getStatus().status === 'running') {
+    return res.status(409).json({ success: false, error: 'TPS test running — wait for it to finish first' });
+  }
+
+  const runs = Math.max(1, Math.min(50, parseInt((req.query.runs as string) || (req.body?.runs as string) || '10', 10)));
+  const blockPendingTarget = Math.max(1, Math.min(500, parseInt((req.query.blockPending as string) || (req.body?.blockPending as string) || '100', 10)));
+
+  calibrationInProgress = true;
+  try {
+    const result = await runFullCalibration({ runs, blockPendingTarget });
+    const serialized = {
+      timestamp: Date.now(),
+      runs,
+      blockPendingTarget,
+      ecc: result.ecc,
+      merkle: result.merkle,
+    };
+    calibrationCache = { timestamp: Date.now(), data: serialized };
+    res.json({ success: true, data: serialized });
+  } catch (error: any) {
+    console.error('[Calibration] error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    calibrationInProgress = false;
+  }
+});
+
+app.get('/api/test/calibration/latest', (_req: Request, res: Response) => {
+  if (!calibrationCache) {
+    return res.json({ success: true, data: null });
+  }
+  res.json({ success: true, data: calibrationCache.data });
+});
+
+// ============ PROOF SIZE EMPIRICAL VALIDATION (paper Table 2 data) ============
+
+let verifyGasCache: { timestamp: number; data: any } | null = null;
+let verifyGasInProgress = false;
+
+app.post('/api/test/verify-gas/run', async (req: Request, res: Response) => {
+  if (verifyGasInProgress) {
+    return res.status(409).json({ success: false, error: 'Verify-gas measurement already running' });
+  }
+  if (tpsRunner.getStatus().status === 'funding' || tpsRunner.getStatus().status === 'running') {
+    return res.status(409).json({ success: false, error: 'TPS test running — wait first' });
+  }
+  const runs = Math.max(1, Math.min(50, parseInt((req.query.runs as string) || (req.body?.runs as string) || '10', 10)));
+  const merkleProofLength = Math.max(1, Math.min(40, parseInt((req.query.proofLength as string) || (req.body?.merkleProofLength as string) || '20', 10)));
+
+  verifyGasInProgress = true;
+  try {
+    const result = await runFullVerifyGasMeasurement({ runs, merkleProofLength });
+    const serialized = { timestamp: Date.now(), runs, merkleProofLength, ecc: result.ecc, merkle: result.merkle };
+    verifyGasCache = { timestamp: Date.now(), data: serialized };
+    res.json({ success: true, data: serialized });
+  } catch (error: any) {
+    console.error('[VerifyGas] error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    verifyGasInProgress = false;
+  }
+});
+
+app.get('/api/test/verify-gas/latest', (_req: Request, res: Response) => {
+  res.json({ success: true, data: verifyGasCache?.data || null });
+});
+
+app.get('/api/test/proof-size-validation', (req: Request, res: Response) => {
+  try {
+    const nsParam = (req.query.ns as string) || '10,100,500,1000';
+    const ns = nsParam
+      .split(',')
+      .map(s => parseInt(s.trim(), 10))
+      .filter(n => Number.isFinite(n) && n > 0 && n <= 1_000_000);
+
+    if (ns.length === 0) {
+      return res.status(400).json({ success: false, error: 'Invalid ns parameter. Provide comma-separated positive integers.' });
+    }
+
+    const data = runProofSizeValidation(ns);
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('[ProofSizeValidation] error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

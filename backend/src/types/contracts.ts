@@ -182,6 +182,7 @@ export interface EnvConfig {
   // UTXO Contract Addresses
   ROOT_CHAIN_UTXO_ADDRESS?: Address;
   PLASMA_CHAIN_UTXO_ADDRESS?: Address;
+  PLASMA_CHAIN_UTXO_MERKLE_ADDRESS?: Address;  // Merkle baseline for benchmark
 }
 
 // UTXO Types
