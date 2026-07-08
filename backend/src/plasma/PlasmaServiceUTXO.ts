@@ -92,6 +92,10 @@ export class PlasmaServiceUTXO {
   private pendingTransactions: PendingTransaction[] = [];
   private autoSubmitTimer: NodeJS.Timeout | null = null;
 
+  // Serializes all L1 tx sends from the operator wallet so nonces never collide
+  // (submitBlockAuto, registerExitUtxo, syncUtxoSpent, submitBlock all share this account)
+  private l1TxQueue: Promise<void> = Promise.resolve();
+
   // Statistics
   private stats = {
     totalTransactions: 0,
@@ -158,6 +162,27 @@ export class PlasmaServiceUTXO {
 
     console.log('Plasma Service UTXO initialized');
     console.log(`Block Config: threshold=${BLOCK_CONFIG.THRESHOLD}, timeout=${BLOCK_CONFIG.TIMEOUT_MS}ms, minInterval=${BLOCK_CONFIG.MIN_INTERVAL_MS}ms`);
+  }
+
+  /**
+   * Runs an L1 write against the operator wallet one at a time, chained onto
+   * l1TxQueue. This guarantees each writeContract's nonce lookup happens only
+   * after the previous tx has already been broadcast, preventing two sends
+   * from racing to the same nonce (which the RPC rejects as
+   * "replacement transaction underpriced").
+   */
+  private async sendL1Tx<T>(fn: () => Promise<T>): Promise<T> {
+    const prior = this.l1TxQueue;
+    let release!: () => void;
+    this.l1TxQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prior;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   /**
@@ -395,7 +420,7 @@ export class PlasmaServiceUTXO {
 
       const accumulatorValue = this.accumulator.getValue();
 
-      const hash = await this.l1WalletClient.writeContract({
+      const hash = await this.sendL1Tx<Hash>(() => this.l1WalletClient.writeContract({
         address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
         abi: rootChainUtxoAbi,
         functionName: 'submitBlock',
@@ -403,7 +428,7 @@ export class PlasmaServiceUTXO {
           { x: BigInt(accumulatorValue.x), y: BigInt(accumulatorValue.y) },
           BigInt(txCount),
         ],
-      } as any);
+      } as any));
 
       // Wait for receipt with timeout
       const receipt = await this.l1PublicClient.waitForTransactionReceipt({
@@ -621,12 +646,12 @@ export class PlasmaServiceUTXO {
     blockNumber: bigint
   ): Promise<Hash> {
     try {
-      const hash = await this.l1WalletClient.writeContract({
+      const hash = await this.sendL1Tx<Hash>(() => this.l1WalletClient.writeContract({
         address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
         abi: rootChainUtxoAbi,
         functionName: 'registerExitUtxo',
         args: [exitUtxoId, user, token, amount, blockNumber],
-      } as any);
+      } as any));
 
       await this.l1PublicClient.waitForTransactionReceipt({ hash });
       return hash;
@@ -902,12 +927,12 @@ export class PlasmaServiceUTXO {
     try {
       console.log(`Syncing UTXO spent: ${utxoId}`);
 
-      const hash = await this.l1WalletClient.writeContract({
+      const hash = await this.sendL1Tx<Hash>(() => this.l1WalletClient.writeContract({
         address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
         abi: rootChainUtxoAbi,
         functionName: 'syncUtxoSpent',
         args: [utxoId, spendingTxHash],
-      } as any);
+      } as any));
 
       await this.l1PublicClient.waitForTransactionReceipt({ hash });
 
@@ -936,7 +961,7 @@ export class PlasmaServiceUTXO {
       console.log(`  Transaction count: ${transactionCount}`);
       console.log(`  Accumulator X: ${accumulatorValue.x.slice(0, 20)}...`);
 
-      const hash = await this.l1WalletClient.writeContract({
+      const hash = await this.sendL1Tx<Hash>(() => this.l1WalletClient.writeContract({
         address: envConfig.ROOT_CHAIN_UTXO_ADDRESS!,
         abi: rootChainUtxoAbi,
         functionName: 'submitBlock',
@@ -944,7 +969,7 @@ export class PlasmaServiceUTXO {
           { x: BigInt(accumulatorValue.x), y: BigInt(accumulatorValue.y) },
           BigInt(transactionCount),
         ],
-      } as any);
+      } as any));
 
       const receipt = await this.l1PublicClient.waitForTransactionReceipt({ hash });
 
