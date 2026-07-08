@@ -241,20 +241,20 @@ export function TransferForm() {
 
   if (!isConnected) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
-        <Wallet className="w-12 h-12 text-gray-500" />
+      <div className="app-panel mx-auto flex max-w-xl flex-col items-center justify-center space-y-4 border-dashed p-10 text-center">
+        <Wallet className="h-12 w-12 text-slate-500" />
         <h3 className="text-xl font-semibold">Wallet Not Connected</h3>
-        <p className="text-gray-400">Please connect your wallet to make transfers.</p>
+        <p className="max-w-sm text-sm text-slate-400">Please connect your wallet to make transfers.</p>
       </div>
     )
   }
 
   if (!contractConfig) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
-        <Loader2 className="w-12 h-12 text-gray-500 animate-spin" />
+      <div className="app-panel mx-auto flex max-w-xl flex-col items-center justify-center space-y-4 border-dashed p-10 text-center">
+        <Loader2 className="h-12 w-12 animate-spin text-slate-500" />
         <h3 className="text-xl font-semibold">Loading Configuration</h3>
-        <p className="text-gray-400">Fetching contract addresses from backend...</p>
+        <p className="max-w-sm text-slate-400">Fetching contract addresses from backend...</p>
       </div>
     )
   }
@@ -267,30 +267,33 @@ export function TransferForm() {
   const maxBalance = formatEther(totalBalance)
 
   return (
-    <div className="w-full max-w-md mx-auto">
-      <form onSubmit={handleSubmit} className="space-y-6 bg-black/40 backdrop-blur-xl p-8 rounded-2xl border border-white/10 shadow-2xl">
+    <div className="w-full max-w-xl mx-auto">
+      <form onSubmit={handleSubmit} className="app-panel space-y-6 p-6 sm:p-8">
         <div className="space-y-2">
-          <h3 className="text-xl font-bold bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent flex items-center gap-2">
-            <Send className="w-5 h-5 text-green-400" />
+          <p className="muted-label">Plasma L2 operation</p>
+          <h3 className="flex items-center gap-2 text-2xl font-bold text-white">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-300">
+              <Send className="h-5 w-5" />
+            </span>
             UTXO Transfer
           </h3>
-          <p className="text-sm text-gray-400">Send tokens using UTXO model on Layer 2.</p>
+          <p className="text-sm text-slate-400">Send tokens using UTXO model on Layer 2.</p>
         </div>
 
         <div className="space-y-4">
           {/* From (Read-only) */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">From</label>
-            <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm font-mono text-gray-300 break-all">
+            <label className="text-xs font-medium uppercase text-slate-500">From</label>
+            <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 text-sm font-mono text-slate-300 break-all">
               {connectedAddress}
             </div>
           </div>
 
           {/* UTXO Info */}
-          <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex justify-between items-center">
+          <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] p-3">
             <div className="flex items-center gap-2">
               <Coins className="w-4 h-4 text-yellow-500" />
-              <span className="text-sm text-gray-400">Available UTXOs:</span>
+              <span className="text-sm text-slate-400">Available UTXOs:</span>
             </div>
             <div className="flex items-center gap-2">
               {isLoadingUtxos ? (
@@ -307,10 +310,10 @@ export function TransferForm() {
 
           {/* To Selection */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">To</label>
+            <label className="text-xs font-medium uppercase text-slate-500">To</label>
             <div className="space-y-2">
               <select
-                className="w-full p-3 rounded-lg bg-black/50 border border-white/10 text-sm focus:outline-none focus:border-green-500/50 transition-colors"
+                className="focus-ring w-full rounded-lg border border-white/10 bg-slate-950/70 p-3 text-sm transition-colors focus:border-emerald-400/60"
                 value={isCustomAddress ? 'custom' : toAddress}
                 onChange={(e) => {
                   if (e.target.value === 'custom') {
@@ -334,7 +337,7 @@ export function TransferForm() {
                 <input
                   type="text"
                   placeholder="0x..."
-                  className="w-full p-3 rounded-lg bg-black/50 border border-white/10 text-sm font-mono focus:outline-none focus:border-green-500/50 transition-colors"
+                  className="focus-ring w-full rounded-lg border border-white/10 bg-slate-950/70 p-3 text-sm font-mono transition-colors focus:border-emerald-400/60"
                   value={toAddress}
                   onChange={(e) => setToAddress(e.target.value)}
                 />
@@ -345,7 +348,7 @@ export function TransferForm() {
           {/* Amount */}
           <div className="space-y-2">
             <div className="flex justify-between items-center">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</label>
+              <label className="text-xs font-medium uppercase text-slate-500">Amount</label>
               <span className="text-xs text-gray-400">
                 Balance: {maxBalance} PLASMA
               </span>
@@ -356,10 +359,10 @@ export function TransferForm() {
                 step="0.0001"
                 placeholder="0.00"
                 className={cn(
-                  "w-full p-3 pr-20 rounded-lg bg-black/50 border text-lg font-mono focus:outline-none transition-colors",
+                  "focus-ring w-full rounded-lg border bg-slate-950/70 p-3 pr-20 text-lg font-mono transition-colors",
                   isInsufficientBalance
                     ? "border-red-500/50 focus:border-red-500"
-                    : "border-white/10 focus:border-green-500/50"
+                    : "border-white/10 focus:border-emerald-400/60"
                 )}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}

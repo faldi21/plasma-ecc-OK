@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { usePublicClient, useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { formatEther, type Address } from 'viem'
@@ -6,7 +6,7 @@ import { cn } from '../utils'
 import { getContractConfig, getBackendApiUrl, type ContractConfig } from '../utils/config'
 import PlasmaChainUTXOABI from '../abis/PlasmaChainUTXO.json'
 import PlasmaTokenABI from '../abis/PlasmaToken.json'
-import { RefreshCw, Layers, Database, Loader2, Coins } from 'lucide-react'
+import { ChevronDown, ChevronUp, RefreshCw, Layers, Database, Loader2, Coins, WalletCards } from 'lucide-react'
 
 interface BalanceTableProps {
   addresses: Address[]
@@ -176,22 +176,33 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
     setShowUtxoDetails(showUtxoDetails === address ? null : address)
   }
 
-  return (
-    <div className="w-full max-w-7xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent flex items-center gap-2">
-          <Database className="w-6 h-6 text-blue-400" />
-          UTXO Balance Monitor
-        </h2>
+  const totalL2Eth = l2EthBalances?.reduce((sum, balance) => sum + balance, 0n)
+  const totalL2Plasma = utxoBalances?.reduce((sum, user) => sum + user.l2Balance, 0n)
+  const totalUtxos = utxoBalances?.reduce((sum, user) => sum + user.utxoCount, 0) ?? 0
+  const connectedKnownAccount = addresses.some((address) => address.toLowerCase() === connectedAddress?.toLowerCase())
 
-        <div className="flex gap-3">
+  return (
+    <div className="w-full space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="muted-label mb-2">Live account state</p>
+          <h2 className="flex items-center gap-2 text-2xl font-bold text-white">
+            <Database className="h-6 w-6 text-cyan-300" />
+            UTXO Balance Monitor
+          </h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Auto-refresh L2 balances, expand rows to inspect active UTXO IDs.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
           <button
             onClick={handleShowL1}
             className={cn(
-              "px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2",
+              "focus-ring inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all duration-200",
               showL1
-                ? "bg-purple-500/20 text-purple-300 border border-purple-500/50"
-                : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
+                ? "border-violet-400/50 bg-violet-400/15 text-violet-200"
+                : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-white"
             )}
           >
             <Layers className="w-4 h-4" />
@@ -200,7 +211,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
 
           <button
             onClick={handleRefresh}
-            className="p-2 rounded-lg bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10 transition-all"
+            className="focus-ring rounded-lg border border-white/10 bg-white/[0.04] p-2 text-slate-400 transition-all hover:bg-white/[0.08] hover:text-white"
             title="Refresh"
           >
             <RefreshCw className={cn("w-5 h-5", (isLoadingL1) && "animate-spin")} />
@@ -208,28 +219,67 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
         </div>
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-xl overflow-hidden shadow-2xl">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="metric-tile">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">Tracked accounts</p>
+            <WalletCards className="h-4 w-4 text-cyan-300" />
+          </div>
+          <p className="mt-3 text-2xl font-bold text-white">{addresses.length}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {connectedKnownAccount ? 'Connected wallet is tracked' : 'Connect one of the test accounts'}
+          </p>
+        </div>
+        <div className="metric-tile">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">Total L2 ETH</p>
+            <Coins className="h-4 w-4 text-blue-300" />
+          </div>
+          <p className="mt-3 font-mono text-2xl font-bold text-white">{formatBalance(totalL2Eth)}</p>
+          <p className="mt-1 text-xs text-slate-500">Native gas balance on Plasma L2</p>
+        </div>
+        <div className="metric-tile">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">Total L2 PLASMA</p>
+            <Coins className="h-4 w-4 text-emerald-300" />
+          </div>
+          <p className="mt-3 font-mono text-2xl font-bold text-white">{formatBalance(totalL2Plasma)}</p>
+          <p className="mt-1 text-xs text-slate-500">Aggregated unspent token balance</p>
+        </div>
+        <div className="metric-tile">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">Active UTXOs</p>
+            <Database className="h-4 w-4 text-amber-300" />
+          </div>
+          <p className="mt-3 text-2xl font-bold text-white">{totalUtxos}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {isTpsTestActive ? 'Polling paused during TPS test' : 'Auto-refresh every 3s'}
+          </p>
+        </div>
+      </div>
+
+      <div className="app-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-white/10 bg-white/5">
-                <th className="p-4 font-medium text-gray-400">Address</th>
+              <tr className="border-b border-white/10 bg-white/[0.04]">
+                <th className="p-4 text-xs font-semibold uppercase text-slate-400">Address</th>
 
                 {/* L2 UTXO Columns */}
-                <th className="p-4 font-medium text-blue-400">L2 ETH</th>
-                <th className="p-4 font-medium text-blue-400">L2 PLASMA</th>
-                <th className="p-4 font-medium text-blue-400">UTXOs</th>
+                <th className="p-4 text-xs font-semibold uppercase text-blue-300">L2 ETH</th>
+                <th className="p-4 text-xs font-semibold uppercase text-blue-300">L2 PLASMA</th>
+                <th className="p-4 text-xs font-semibold uppercase text-blue-300">UTXOs</th>
 
                 {/* L1 Columns (Conditional) */}
                 {showL1 && (
                   <>
-                    <th className="p-4 font-medium text-purple-400 border-l border-white/10">
+                    <th className="border-l border-white/10 p-4 text-xs font-semibold uppercase text-violet-300">
                       <div className="flex items-center gap-2">
                         L1 ETH
                         {isLoadingL1 && <Loader2 className="w-3 h-3 animate-spin" />}
                       </div>
                     </th>
-                    <th className="p-4 font-medium text-purple-400">L1 PLASMA</th>
+                    <th className="p-4 text-xs font-semibold uppercase text-violet-300">L1 PLASMA</th>
                   </>
                 )}
               </tr>
@@ -250,14 +300,13 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
                 const isExpanded = showUtxoDetails === address
 
                 return (
-                  <>
+                  <Fragment key={address}>
                     <tr
-                      key={address}
                       className={cn(
                         "transition-colors group cursor-pointer",
                         isConnectedAddress
-                          ? "bg-gradient-to-r from-blue-500/20 to-purple-500/20 hover:from-blue-500/30 hover:to-purple-500/30 border-l-2 border-blue-400"
-                          : "hover:bg-white/5"
+                          ? "border-l-2 border-cyan-300 bg-cyan-400/10 hover:bg-cyan-400/15"
+                          : "hover:bg-white/[0.04]"
                       )}
                       onClick={() => utxoCount > 0 && toggleUtxoDetails(address)}
                     >
@@ -266,7 +315,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
                           "w-8 h-8 rounded-full flex items-center justify-center text-xs transition-colors",
                           isConnectedAddress
                             ? "bg-blue-500/40 text-blue-300"
-                            : "bg-gradient-to-br from-blue-500/20 to-purple-500/20 text-gray-400 group-hover:text-white"
+                            : "bg-white/[0.06] text-gray-400 group-hover:text-white"
                         )}>
                           {isConnectedAddress && <span className="text-lg">✓</span>}
                           {!isConnectedAddress && idx + 1}
@@ -288,9 +337,9 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
                           <Coins className="w-4 h-4 text-yellow-500" />
                           <span>{utxoCount}</span>
                           {utxoCount > 0 && (
-                            <span className="text-xs text-gray-500">
-                              {isExpanded ? '▲' : '▼'}
-                            </span>
+                            isExpanded
+                              ? <ChevronUp className="h-3.5 w-3.5 text-slate-500" />
+                              : <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
                           )}
                         </div>
                       </td>
@@ -309,15 +358,15 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
 
                     {/* UTXO Details Row */}
                     {isExpanded && userUtxo && userUtxo.utxos.length > 0 && (
-                      <tr key={`${address}-details`} className="bg-black/60">
+                      <tr className="bg-black/35">
                         <td colSpan={showL1 ? 6 : 4} className="p-4">
                           <div className="space-y-2">
-                            <div className="text-xs font-medium text-gray-400 mb-3">UTXO Details:</div>
+                            <div className="mb-3 text-xs font-medium uppercase text-slate-400">UTXO Details</div>
                             <div className="grid gap-2">
                               {userUtxo.utxos.map((utxo) => (
                                 <div
                                   key={utxo.utxoId}
-                                  className="p-3 rounded-lg bg-white/5 border border-white/10 flex justify-between items-center"
+                                  className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] p-3"
                                 >
                                   <div className="flex items-center gap-3">
                                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
@@ -338,7 +387,7 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -346,8 +395,8 @@ export function BalanceTable({ addresses }: BalanceTableProps) {
         </div>
       </div>
 
-      <div className="text-center text-xs text-gray-500">
-        UTXO Model • Auto-refresh: 3s • L1: On-demand • Click row to expand UTXOs
+      <div className="text-center text-xs text-slate-500">
+        UTXO model / Auto-refresh 3s / L1 balances on demand / Click a row to expand UTXOs
       </div>
     </div>
   )

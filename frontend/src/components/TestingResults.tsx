@@ -1,84 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
-import { AlertCircle, TrendingUp, TrendingDown, Check, Play, Square, Zap, Clock, Activity, RotateCw, Trash2, Download, Edit3, History } from 'lucide-react'
+import { AlertCircle, Check, Play, Square, Zap, Clock, Activity, RotateCw, Trash2, Download, Edit3, History } from 'lucide-react'
 import { getBackendApiUrl } from '../utils/config'
 
 // Safe number formatter — handles null/undefined/NaN from API gracefully
 const fix = (v: number | null | undefined, digits = 2): string =>
   typeof v === 'number' && isFinite(v) ? v.toFixed(digits) : '0'
-
-interface TestResult {
-  week: number
-  type: string
-  totalTransactions: number
-  successfulTransactions: number
-  failedTransactions: number
-  tps: number
-  avgLatency: number
-  maxLatency?: number
-  minLatency?: number
-  successRate: number
-}
-
-const testResults: TestResult[] = [
-  {
-    week: 1,
-    type: 'Baseline',
-    totalTransactions: 20,
-    successfulTransactions: 20,
-    failedTransactions: 0,
-    tps: 8.35,
-    avgLatency: 1200,
-    successRate: 100,
-  },
-  {
-    week: 2,
-    type: 'Optimized (Batching)',
-    totalTransactions: 60,
-    successfulTransactions: 60,
-    failedTransactions: 0,
-    tps: 47.06,
-    avgLatency: 21,
-    successRate: 100,
-  },
-  {
-    week: 3,
-    type: 'Stress (Raw ETH)',
-    totalTransactions: 3850,
-    successfulTransactions: 3850,
-    failedTransactions: 0,
-    tps: 60.10,
-    avgLatency: 22,
-    maxLatency: 28.81,
-    minLatency: 16.64,
-    successRate: 100,
-  },
-  {
-    week: 4,
-    type: 'UTXO Operations',
-    totalTransactions: 850,
-    successfulTransactions: 850,
-    failedTransactions: 0,
-    tps: 0.21,
-    avgLatency: 4695,
-    maxLatency: 4775,
-    minLatency: 4655,
-    successRate: 100,
-  },
-]
-
-const performanceData = testResults.map((r) => ({
-  week: `Week ${r.week}`,
-  tps: r.tps,
-  latency: r.avgLatency,
-}))
-
-const successData = testResults.map((r) => ({
-  week: `Week ${r.week}`,
-  successful: r.successfulTransactions,
-  failed: r.failedTransactions,
-}))
 
 interface TpsStatus {
   status: 'idle' | 'funding' | 'running' | 'complete' | 'error'
@@ -283,7 +211,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
   }[tpsStatus.status]
 
   return (
-    <Card className="bg-gradient-to-br from-purple-950/30 to-blue-950/30 border-purple-800/50">
+    <Card className="border-teal-400/20 bg-slate-950/75">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -371,7 +299,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
                   {mode === 'ecc' ? 'PlasmaChainUTXO' : 'PlasmaChainUTXOMerkle'}
                 </span>
               </div>
-              <p className="text-xs font-semibold text-purple-300 mb-2 uppercase tracking-wide">Performance Tuning (Plasma-UTXO-ECC v2)</p>
+              <p className="text-xs font-semibold text-purple-300 mb-2 uppercase">Performance Tuning (Plasma-UTXO-ECC v2)</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs text-gray-400">Batch Size (sub-ops per tx)</label>
@@ -481,7 +409,7 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
               </div>
               <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-purple-500 to-blue-500 h-3 transition-all duration-300"
+                  className="bg-teal-400 h-3 transition-all duration-300"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -546,11 +474,11 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
         {isComplete && result && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-gradient-to-br from-purple-900/40 to-purple-700/20 border border-purple-700/30 rounded-lg p-4">
+              <div className="rounded-lg border border-purple-700/30 bg-purple-500/10 p-4">
                 <p className="text-xs text-purple-300 mb-1">Final TPS</p>
                 <p className="text-3xl font-bold text-purple-100">{fix(result.tps, 2)}</p>
               </div>
-              <div className="bg-gradient-to-br from-green-900/40 to-green-700/20 border border-green-700/30 rounded-lg p-4">
+              <div className="rounded-lg border border-green-700/30 bg-green-500/10 p-4">
                 <p className="text-xs text-green-300 mb-1">Success Rate</p>
                 <p className="text-3xl font-bold text-green-100">
                   {result.totalTransactions > 0
@@ -559,11 +487,11 @@ function LiveTpsBenchmark({ onHistoryChange }: { onHistoryChange: () => void }) 
                   %
                 </p>
               </div>
-              <div className="bg-gradient-to-br from-blue-900/40 to-blue-700/20 border border-blue-700/30 rounded-lg p-4">
+              <div className="rounded-lg border border-blue-700/30 bg-blue-500/10 p-4">
                 <p className="text-xs text-blue-300 mb-1">Duration</p>
                 <p className="text-3xl font-bold text-blue-100">{fix((result.durationMs || 0) / 1000, 2)}s</p>
               </div>
-              <div className="bg-gradient-to-br from-slate-900/40 to-slate-700/20 border border-slate-700/30 rounded-lg p-4">
+              <div className="rounded-lg border border-slate-700/30 bg-slate-800/30 p-4">
                 <p className="text-xs text-slate-300 mb-1">Total TX</p>
                 <p className="text-3xl font-bold text-slate-100">{result.totalTransactions}</p>
                 <p className="text-xs text-slate-400 mt-1">
@@ -758,11 +686,6 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
   })
 
   // ===== TABLE 3: Gas Cost (measured, mean ± std) =====
-  const fmtGas = (s: string) => {
-    const n = Number(s)
-    if (!isFinite(n) || n === 0) return '—'
-    return n.toLocaleString()
-  }
   const fmtAggGas = (agg: AggregatedGas | undefined) => {
     if (!agg || !agg.mean || agg.mean === '0') return null
     const mean = Number(agg.mean)
@@ -824,7 +747,7 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
   }
 
   return (
-    <Card className="bg-gradient-to-br from-indigo-950/30 to-slate-900/50 border-indigo-800/40">
+    <Card className="border-indigo-400/20 bg-slate-950/75">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -850,7 +773,7 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
         {/* === Table 2 — Theoretical + Empirical === */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase">
               TABLE 2 — Membership-Proof Size Comparison (theoretical + empirical)
             </h4>
             <button
@@ -947,7 +870,7 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
         {/* === Table 3 === */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase">
               TABLE 3 — Gas Cost per Operation
             </h4>
             <button
@@ -1060,7 +983,7 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
         {/* === Table 3b — Isolated Verify-Step Gas === */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-indigo-300 uppercase tracking-wide">
+            <h4 className="text-sm font-semibold text-indigo-300 uppercase">
               TABLE 3b — Isolated Verify-Step Gas (per witness check)
             </h4>
             <div className="flex items-center gap-2">
@@ -1140,7 +1063,7 @@ function PaperComparisonTables({ history }: { history: TpsHistoryEntry[] }) {
 
         {/* === Table 4 === */}
         <div>
-          <h4 className="text-sm font-semibold text-indigo-300 mb-2 uppercase tracking-wide">
+          <h4 className="text-sm font-semibold text-indigo-300 mb-2 uppercase">
             TABLE 4 — Throughput and Latency Comparison
           </h4>
           <p className="text-xs text-gray-500 mb-2">
@@ -1414,7 +1337,6 @@ function TpsHistoryTable({ history, refreshing, onRefresh }: { history: TpsHisto
 }
 
 export function TestingResults() {
-  const [selectedWeek, setSelectedWeek] = useState<number | null>(null)
   const [history, setHistory] = useState<TpsHistoryEntry[]>([])
   const [historyRefreshing, setHistoryRefreshing] = useState(false)
   const apiBase = getBackendApiUrl()
@@ -1434,13 +1356,14 @@ export function TestingResults() {
 
   useEffect(() => { fetchHistory() }, [])
 
-  const selectedResult = selectedWeek ? testResults.find((r) => r.week === selectedWeek) : null
-
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-8">
-      <div className="space-y-2">
-        <h2 className="text-3xl font-bold tracking-tight">Testing Results</h2>
-        <p className="text-gray-400">Live scalability benchmark + comprehensive 4-week analysis</p>
+    <div className="w-full space-y-6">
+      <div className="app-panel p-6">
+        <p className="muted-label mb-2">Benchmark lab</p>
+        <h2 className="text-3xl font-bold text-white">Testing Results</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+          Run live scalability benchmarks, generate paper comparison tables, and review persisted TPS history.
+        </p>
       </div>
 
       {/* Live TPS Benchmark */}
@@ -1451,278 +1374,6 @@ export function TestingResults() {
 
       {/* Benchmark History */}
       <TpsHistoryTable history={history} refreshing={historyRefreshing} onRefresh={fetchHistory} />
-
-      <div className="border-t border-slate-800 pt-6">
-        <h3 className="text-xl font-semibold mb-1">Historical Test Results</h3>
-        <p className="text-sm text-gray-400 mb-4">4-week performance analysis</p>
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {testResults.map((result) => (
-          <Card
-            key={result.week}
-            className={`cursor-pointer transition-all ${
-              selectedWeek === result.week ? 'ring-2 ring-blue-500 bg-blue-950/20' : 'hover:bg-white/5'
-            }`}
-            onClick={() => setSelectedWeek(selectedWeek === result.week ? null : result.week)}
-          >
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Week {result.week}</CardTitle>
-              <CardDescription className="text-xs">{result.type}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="text-xs text-gray-400">TPS</p>
-                <p className="text-2xl font-bold">{fix(result.tps, 2)}</p>
-              </div>
-              <div className="flex justify-between text-xs">
-                <div>
-                  <p className="text-gray-400">TX</p>
-                  <p className="font-semibold">{result.totalTransactions}</p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Success</p>
-                  <p className="font-semibold text-green-400">{result.successRate}%</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* TPS Comparison */}
-        <Card className="bg-slate-900/50 border-slate-800">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-blue-400" />
-              TPS Evolution
-            </CardTitle>
-            <CardDescription>Transactions per second across all weeks</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={performanceData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis dataKey="week" stroke="rgba(255,255,255,0.5)" />
-                <YAxis stroke="rgba(255,255,255,0.5)" />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
-                  formatter={(value: any) => value.toFixed(2)}
-                />
-                <Bar dataKey="tps" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Success Rate */}
-        <Card className="bg-slate-900/50 border-slate-800">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Check className="w-5 h-5 text-green-400" />
-              Success Rate
-            </CardTitle>
-            <CardDescription>Transaction success across all testing phases</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={successData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis dataKey="week" stroke="rgba(255,255,255,0.5)" />
-                <YAxis stroke="rgba(255,255,255,0.5)" />
-                <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
-                <Legend />
-                <Bar dataKey="successful" fill="#10b981" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="failed" fill="#ef4444" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Latency Comparison */}
-      <Card className="bg-slate-900/50 border-slate-800">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <TrendingDown className="w-5 h-5 text-yellow-400" />
-            Average Latency (ms)
-          </CardTitle>
-          <CardDescription>Processing time per transaction - Note: Week 4 includes full UTXO validation</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis dataKey="week" stroke="rgba(255,255,255,0.5)" />
-              <YAxis stroke="rgba(255,255,255,0.5)" scale="log" />
-              <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
-              <Line type="monotone" dataKey="latency" stroke="#eab308" strokeWidth={3} dot={{ r: 6 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Detailed Results */}
-      {selectedResult && (
-        <Card className="bg-slate-900/50 border-slate-800">
-          <CardHeader>
-            <CardTitle className="text-lg">Week {selectedResult.week} - {selectedResult.type}</CardTitle>
-            <CardDescription>Detailed performance metrics</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <p className="text-sm text-gray-400">Total Transactions</p>
-                <p className="text-2xl font-bold">{selectedResult.totalTransactions.toLocaleString()}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm text-gray-400">Success Rate</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-2xl font-bold text-green-400">{selectedResult.successRate}%</p>
-                  <Check className="w-5 h-5 text-green-400" />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm text-gray-400">TPS</p>
-                <p className="text-2xl font-bold">{selectedResult.tps.toFixed(2)}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm text-gray-400">Avg Latency</p>
-                <p className="text-2xl font-bold">{selectedResult.avgLatency.toFixed(0)}ms</p>
-              </div>
-            </div>
-
-            {selectedResult.minLatency && selectedResult.maxLatency && (
-              <div className="bg-slate-800/50 rounded-lg p-4 space-y-3">
-                <p className="text-sm font-medium">Latency Range</p>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-xs text-gray-400">Min</p>
-                    <p className="text-lg font-semibold">{selectedResult.minLatency.toFixed(0)}ms</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Avg</p>
-                    <p className="text-lg font-semibold">{selectedResult.avgLatency.toFixed(0)}ms</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Max</p>
-                    <p className="text-lg font-semibold">{selectedResult.maxLatency.toFixed(0)}ms</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Key Findings */}
-            <div className="bg-slate-800/50 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-medium">Key Findings</p>
-              <div className="space-y-2 text-sm text-gray-300">
-                {selectedResult.week === 1 && (
-                  <>
-                    <p>✓ System functionality validated with baseline testing</p>
-                    <p>✓ Established TPS baseline: 8.35 TX/sec</p>
-                  </>
-                )}
-                {selectedResult.week === 2 && (
-                  <>
-                    <p>✓ Batching optimization achieved 5.6x improvement over Week 1</p>
-                    <p>✓ Performance scaled from 8.35 to 47.06 TPS</p>
-                  </>
-                )}
-                {selectedResult.week === 3 && (
-                  <>
-                    <p>✓ Handled 3,850 raw ETH transfers with 100% success rate</p>
-                    <p>✓ No breaking point detected - system scales linearly</p>
-                    <p>✓ Peak throughput: 60.10 TPS</p>
-                  </>
-                )}
-                {selectedResult.week === 4 && (
-                  <>
-                    <p>✓ Real UTXO operations completed with perfect reliability</p>
-                    <p>✓ 850 circular transfers (A→B→C→A) with zero double-spends</p>
-                    <p>⚠ Lower TPS (0.21) reflects comprehensive validation overhead</p>
-                    <p>✓ Latency includes: cryptographic signing, UTXO state management, accumulator updates</p>
-                  </>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Comparison Table */}
-      <Card className="bg-slate-900/50 border-slate-800">
-        <CardHeader>
-          <CardTitle className="text-lg">All Results Comparison</CardTitle>
-          <CardDescription>Complete performance metrics across all testing phases</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left py-3 px-4 font-semibold">Week</th>
-                  <th className="text-left py-3 px-4 font-semibold">Type</th>
-                  <th className="text-right py-3 px-4 font-semibold">Transactions</th>
-                  <th className="text-right py-3 px-4 font-semibold">Success</th>
-                  <th className="text-right py-3 px-4 font-semibold">TPS</th>
-                  <th className="text-right py-3 px-4 font-semibold">Latency (ms)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {testResults.map((result) => (
-                  <tr key={result.week} className="border-b border-slate-800 hover:bg-slate-800/30">
-                    <td className="py-3 px-4 font-medium">Week {result.week}</td>
-                    <td className="py-3 px-4 text-gray-400">{result.type}</td>
-                    <td className="py-3 px-4 text-right">{result.totalTransactions.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-green-400 font-semibold">{result.successRate}%</span>
-                    </td>
-                    <td className="py-3 px-4 text-right font-semibold">{fix(result.tps, 2)}</td>
-                    <td className="py-3 px-4 text-right">{fix(result.avgLatency, 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Key Insights */}
-      <Card className="bg-blue-950/30 border-blue-800/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-blue-400" />
-            Key Insights
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <h4 className="font-semibold text-blue-300">Performance vs Security Trade-off</h4>
-            <p className="text-sm text-gray-300">
-              Week 3 (60 TPS) demonstrates raw network throughput, while Week 4 (0.21 TPS) reflects realistic
-              performance with full UTXO validation. The 285x difference is not a limitation—it's evidence of
-              proper cryptographic security and state management.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <h4 className="font-semibold text-blue-300">Reliability Achievement</h4>
-            <p className="text-sm text-gray-300">
-              Across 4,780 total transactions spanning 4 weeks, the system achieved a 100% success rate with zero
-              failures. This demonstrates production-grade reliability for Layer 2 Plasma operations.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <h4 className="font-semibold text-blue-300">Scalability Validation</h4>
-            <p className="text-sm text-gray-300">
-              Week 3 stress testing with 3,850 transactions showed no breaking point and consistent performance.
-              The system demonstrates linear scalability without degradation under extreme load.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   )
 }

@@ -131,20 +131,20 @@ export function DepositForm() {
 
   if (!isConnected) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
-        <Wallet className="w-12 h-12 text-gray-500" />
+      <div className="app-panel mx-auto flex max-w-xl flex-col items-center justify-center space-y-4 border-dashed p-10 text-center">
+        <Wallet className="h-12 w-12 text-slate-500" />
         <h3 className="text-xl font-semibold">Wallet Not Connected</h3>
-        <p className="text-gray-400">Please connect your wallet to make deposits.</p>
+        <p className="max-w-sm text-sm text-slate-400">Please connect your wallet to make deposits.</p>
       </div>
     )
   }
 
   if (!contractConfig) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 bg-white/5 rounded-xl border border-white/10">
-        <Loader2 className="w-12 h-12 text-gray-500 animate-spin" />
+      <div className="app-panel mx-auto flex max-w-xl flex-col items-center justify-center space-y-4 border-dashed p-10 text-center">
+        <Loader2 className="h-12 w-12 animate-spin text-slate-500" />
         <h3 className="text-xl font-semibold">Loading Configuration</h3>
-        <p className="text-gray-400">Fetching contract addresses from backend...</p>
+        <p className="max-w-sm text-sm text-slate-400">Fetching contract addresses from backend...</p>
       </div>
     )
   }
@@ -152,20 +152,23 @@ export function DepositForm() {
   const isWrongNetwork = chainId !== sepolia.id
 
   return (
-    <div className="w-full max-w-md mx-auto">
-      <div className="space-y-6 bg-black/40 backdrop-blur-xl p-8 rounded-2xl border border-white/10 shadow-2xl">
+    <div className="w-full max-w-xl mx-auto">
+      <div className="app-panel space-y-6 p-6 sm:p-8">
         <div className="space-y-2">
-          <h3 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent flex items-center gap-2">
-            <ArrowDownCircle className="w-5 h-5 text-blue-400" />
-            Deposit to Layer 2 (UTXO)
+          <p className="muted-label">Sepolia to Plasma L2</p>
+          <h3 className="flex items-center gap-2 text-2xl font-bold text-white">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-400/10 text-blue-300">
+              <ArrowDownCircle className="h-5 w-5" />
+            </span>
+            Deposit to Layer 2
           </h3>
-          <p className="text-sm text-gray-400">Move tokens from Sepolia to Plasma L2. Creates a new UTXO on L2.</p>
+          <p className="text-sm text-slate-400">Move tokens from Sepolia to Plasma L2. Creates a new UTXO on L2.</p>
         </div>
 
         <div className="space-y-4">
           {/* Balance Info */}
-          <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex justify-between items-center">
-            <span className="text-sm text-gray-400">L1 Balance:</span>
+          <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] p-3">
+            <span className="text-sm text-slate-400">L1 Balance:</span>
             <span className="font-mono font-medium">
               {balance ? formatEther(balance as bigint) : '0'} PLASMA
             </span>
@@ -173,18 +176,18 @@ export function DepositForm() {
 
           {/* Amount Input */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</label>
+            <label className="text-xs font-medium uppercase text-slate-500">Amount</label>
             <div className="relative">
               <input
                 type="number"
                 step="0.0001"
                 placeholder="0.00"
-                className="w-full p-3 rounded-lg bg-black/50 border border-white/10 text-lg font-mono focus:outline-none focus:border-blue-500/50 transition-colors"
+                className="focus-ring w-full rounded-lg border border-white/10 bg-slate-950/70 p-3 text-lg font-mono transition-colors focus:border-blue-400/60"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 disabled={step !== 'input' && step !== 'success'}
               />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-500">
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">
                 PLASMA
               </div>
             </div>

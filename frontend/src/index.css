@@ -30,7 +30,69 @@
   * {
     @apply border-border;
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply min-h-screen bg-[#080b13] text-foreground antialiased;
+    background:
+      linear-gradient(135deg, rgba(12, 18, 32, 0.96), rgba(8, 11, 19, 1) 42%, rgba(10, 16, 25, 1)),
+      linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+    background-size: auto, 48px 48px, 48px 48px;
+  }
+  ::selection {
+    background: rgba(45, 212, 191, 0.28);
+    color: #f8fafc;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+  select option {
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0b1220;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 999px;
+    border: 2px solid #0b1220;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+  }
+}
+
+@layer components {
+  .app-container {
+    @apply w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .app-panel {
+    @apply rounded-lg border border-white/10 bg-slate-950/75 shadow-2xl shadow-black/25 backdrop-blur-xl;
+  }
+
+  .app-panel-soft {
+    @apply rounded-lg border border-white/10 bg-white/[0.045] backdrop-blur-xl;
+  }
+
+  .metric-tile {
+    @apply rounded-lg border border-white/10 bg-slate-950/55 p-4 shadow-lg shadow-black/10;
+  }
+
+  .muted-label {
+    @apply text-xs font-medium uppercase text-slate-500;
+  }
+
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-teal-400/40 focus:ring-offset-0;
   }
 }

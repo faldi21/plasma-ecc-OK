@@ -10,10 +10,82 @@ import { WithdrawForm } from './components/WithdrawForm'
 import { TestingResults } from './components/TestingResults'
 import { type Address } from 'viem'
 import { cn } from './utils'
-import { LayoutDashboard, Send, ArrowDownCircle, ArrowUpCircle, BarChart3 } from 'lucide-react'
+import {
+  Activity,
+  ArrowDownCircle,
+  ArrowRight,
+  ArrowUpCircle,
+  BarChart3,
+  Cpu,
+  LayoutDashboard,
+  Network,
+  Send,
+  ShieldCheck,
+  type LucideIcon,
+} from 'lucide-react'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 const queryClient = new QueryClient()
+
+type TabId = 'balances' | 'transfer' | 'deposit' | 'withdraw' | 'testing'
+
+interface DashboardTab {
+  id: TabId
+  label: string
+  title: string
+  description: string
+  icon: LucideIcon
+  activeClass: string
+  iconClass: string
+}
+
+const DASHBOARD_TABS: DashboardTab[] = [
+  {
+    id: 'balances',
+    label: 'Balances',
+    title: 'Balance Monitor',
+    description: 'Pantau saldo L2, token PLASMA, dan UTXO aktif dari akun pengujian.',
+    icon: LayoutDashboard,
+    activeClass: 'border-cyan-400/60 bg-cyan-400/10 text-cyan-100 shadow-cyan-950/40',
+    iconClass: 'text-cyan-300',
+  },
+  {
+    id: 'transfer',
+    label: 'Transfer',
+    title: 'UTXO Transfer',
+    description: 'Kirim token di Plasma L2 dengan pemilihan UTXO dan signature wallet.',
+    icon: Send,
+    activeClass: 'border-emerald-400/60 bg-emerald-400/10 text-emerald-100 shadow-emerald-950/40',
+    iconClass: 'text-emerald-300',
+  },
+  {
+    id: 'deposit',
+    label: 'Deposit',
+    title: 'Deposit to L2',
+    description: 'Approve token di Sepolia lalu buat UTXO baru di Plasma L2.',
+    icon: ArrowDownCircle,
+    activeClass: 'border-blue-400/60 bg-blue-400/10 text-blue-100 shadow-blue-950/40',
+    iconClass: 'text-blue-300',
+  },
+  {
+    id: 'withdraw',
+    label: 'Withdraw',
+    title: 'Withdraw to L1',
+    description: 'Mulai exit dari L2, lacak challenge period, lalu finalize di L1.',
+    icon: ArrowUpCircle,
+    activeClass: 'border-amber-400/60 bg-amber-400/10 text-amber-100 shadow-amber-950/40',
+    iconClass: 'text-amber-300',
+  },
+  {
+    id: 'testing',
+    label: 'Testing Results',
+    title: 'Testing and Results',
+    description: 'Jalankan benchmark TPS, export data paper, dan lihat histori pengujian.',
+    icon: BarChart3,
+    activeClass: 'border-violet-400/60 bg-violet-400/10 text-violet-100 shadow-violet-950/40',
+    iconClass: 'text-violet-300',
+  },
+]
 
 // Default test addresses
 const TEST_ADDRESSES: Address[] = [
@@ -26,101 +98,118 @@ const TEST_ADDRESSES: Address[] = [
 ]
 
 function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'balances' | 'transfer' | 'deposit' | 'withdraw' | 'testing'>('balances')
+  const [activeTab, setActiveTab] = useState<TabId>('balances')
+  const activeTabData = DASHBOARD_TABS.find((tab) => tab.id === activeTab) ?? DASHBOARD_TABS[0]
+  const ActiveIcon = activeTabData.icon
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center py-12">
-      <div className="w-full max-w-6xl px-6 mb-8 flex items-end justify-between">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight mb-2">
-            Plasma <span className="text-blue-400">ECC</span> <span className="text-yellow-400">UTXO</span>
-          </h1>
-          <p className="text-slate-400">
-            Layer 2 Plasma with UTXO model and ECC Accumulator
-          </p>
-        </div>
+    <div className="min-h-screen overflow-x-hidden text-slate-100">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#080b13]/88 backdrop-blur-xl">
+        <div className="app-container flex flex-col gap-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-teal-400/30 bg-teal-400/10">
+              <ShieldCheck className="h-5 w-5 text-teal-300" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight text-white">
+                Plasma ECC UTXO
+              </h1>
+              <p className="text-sm text-slate-400">
+                Operational dashboard for Layer 2 UTXO transfers and benchmarking
+              </p>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-4">
-          <ConnectButton />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap gap-2 text-xs text-slate-300">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-400/20 bg-blue-400/10 px-3 py-1.5">
+                <Network className="h-3.5 w-3.5 text-blue-300" />
+                Sepolia L1
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5">
+                <Cpu className="h-3.5 w-3.5 text-emerald-300" />
+                Plasma L2
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-1.5">
+                <Activity className="h-3.5 w-3.5 text-amber-300" />
+                ECC Accumulator
+              </span>
+            </div>
+            <ConnectButton />
+          </div>
         </div>
-      </div>
+      </header>
 
-      <div className="w-full max-w-6xl px-6 mb-8">
-        <div className="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
-          <button
-            onClick={() => setActiveTab('balances')}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-              activeTab === 'balances'
-                ? "bg-blue-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white hover:bg-white/5"
-            )}
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            Balances
-          </button>
-          <button
-            onClick={() => setActiveTab('transfer')}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-              activeTab === 'transfer'
-                ? "bg-green-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white hover:bg-white/5"
-            )}
-          >
-            <Send className="w-4 h-4" />
-            Transfer
-          </button>
-          <button
-            onClick={() => setActiveTab('deposit')}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-              activeTab === 'deposit'
-                ? "bg-cyan-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white hover:bg-white/5"
-            )}
-          >
-            <ArrowDownCircle className="w-4 h-4" />
-            Deposit
-          </button>
-          <button
-            onClick={() => setActiveTab('withdraw')}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-              activeTab === 'withdraw'
-                ? "bg-orange-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white hover:bg-white/5"
-            )}
-          >
-            <ArrowUpCircle className="w-4 h-4" />
-            Withdraw
-          </button>
-          <button
-            onClick={() => setActiveTab('testing')}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
-              activeTab === 'testing'
-                ? "bg-purple-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white hover:bg-white/5"
-            )}
-          >
-            <BarChart3 className="w-4 h-4" />
-            Testing Results
-          </button>
-        </div>
-      </div>
+      <main className="app-container space-y-6 py-6 sm:py-8">
+        <section className="app-panel overflow-hidden">
+          <div className="grid gap-6 p-5 md:grid-cols-[1fr_auto] md:p-6">
+            <div className="flex items-start gap-4">
+              <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.06]', activeTabData.iconClass)}>
+                <ActiveIcon className="h-6 w-6" />
+              </div>
+              <div className="min-w-0">
+                <p className="muted-label mb-2">Current workspace</p>
+                <h2 className="text-3xl font-bold leading-tight text-white">{activeTabData.title}</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">{activeTabData.description}</p>
+              </div>
+            </div>
 
-      {activeTab === 'balances' ? (
-        <BalanceTable addresses={TEST_ADDRESSES} />
-      ) : activeTab === 'transfer' ? (
-        <TransferForm />
-      ) : activeTab === 'deposit' ? (
-        <DepositForm />
-      ) : activeTab === 'withdraw' ? (
-        <WithdrawForm />
-      ) : (
-        <TestingResults />
-      )}
+            <div className="app-panel-soft flex min-w-[260px] items-center gap-3 p-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-400/10 text-blue-300">
+                <Network className="h-4 w-4" />
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-500" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-400/10 text-teal-300">
+                <ShieldCheck className="h-4 w-4" />
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-500" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-300">
+                <Cpu className="h-4 w-4" />
+              </div>
+              <div className="ml-1">
+                <p className="text-xs font-semibold text-slate-200">L1 to L2 flow</p>
+                <p className="text-xs text-slate-500">Deposit, transfer, exit</p>
+              </div>
+            </div>
+          </div>
+
+          <nav className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/15 p-3 md:grid-cols-5" aria-label="Dashboard sections">
+            {DASHBOARD_TABS.map((tab) => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'flex min-h-12 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-all focus-ring',
+                    isActive
+                      ? tab.activeClass
+                      : 'border-transparent text-slate-400 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+                  )}
+                >
+                  <Icon className={cn('h-4 w-4', isActive ? tab.iconClass : 'text-slate-500')} />
+                  <span className="truncate">{tab.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+        </section>
+
+        <section>
+          {activeTab === 'balances' ? (
+            <BalanceTable addresses={TEST_ADDRESSES} />
+          ) : activeTab === 'transfer' ? (
+            <TransferForm />
+          ) : activeTab === 'deposit' ? (
+            <DepositForm />
+          ) : activeTab === 'withdraw' ? (
+            <WithdrawForm />
+          ) : (
+            <TestingResults />
+          )}
+        </section>
+      </main>
     </div>
   )
 }
