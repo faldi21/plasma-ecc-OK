@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import "./ECCMath.sol";
+
 /**
  * @title ECCAccumulator
  * @dev Library untuk ECC Accumulator sebagai pengganti Merkle Tree
  * Menggunakan elliptic curve untuk mencatat transaksi secara efisien
+ *
+ * pointAdd/scalarMul/modInverse/modExp below delegate to ECCMath.sol (code
+ * extraction, no behavior change -- see ECCMath.sol's docblock and
+ * contracts/test/CommitVariants.t.sol's ECCAccumulatorParityTest for the
+ * equivalence proof). The Point struct and all other members are untouched.
  */
 library ECCAccumulator {
     // Secp256k1 curve parameters
@@ -89,117 +96,37 @@ library ECCAccumulator {
     }
 
     /**
-     * @dev Point addition pada elliptic curve (fixed to avoid overflow)
+     * @dev Point addition pada elliptic curve. Delegates to ECCMath.pointAdd
+     * (extraction, no behavior change).
      */
     function pointAdd(Point memory p1, Point memory p2) internal view returns (Point memory) {
-        if (p1.x == 0 && p1.y == 0) return p2;
-        if (p2.x == 0 && p2.y == 0) return p1;
-
-        uint256 slope;
-        if (p1.x == p2.x) {
-            if (p1.y == p2.y) {
-                // Point doubling
-                uint256 temp1 = mulmod(p1.x, p1.x, P);
-                uint256 temp2 = mulmod(3, temp1, P);
-                uint256 temp3 = mulmod(2, p1.y, P);
-                uint256 inverse = modInverse(temp3, P);
-                slope = mulmod(temp2, inverse, P);
-            } else {
-                // Points are inverses
-                return Point(0, 0);
-            }
-        } else {
-            // Regular addition - use addmod to avoid overflow
-            uint256 dy = addmod(p2.y, P - p1.y, P);  // p2.y - p1.y (mod P)
-            uint256 dx = addmod(p2.x, P - p1.x, P);  // p2.x - p1.x (mod P)
-            uint256 inverse = modInverse(dx, P);
-            slope = mulmod(dy, inverse, P);
-        }
-
-        // x3 = slope^2 - p1.x - p2.x (mod P)
-        // Use addmod to avoid overflow
-        uint256 slope2 = mulmod(slope, slope, P);
-        uint256 x3 = slope2;
-        x3 = addmod(x3, P - p1.x, P);  // x3 = slope^2 - p1.x
-        x3 = addmod(x3, P - p2.x, P);  // x3 = slope^2 - p1.x - p2.x
-
-        // y3 = slope * (p1.x - x3) - p1.y (mod P)
-        uint256 dx = addmod(p1.x, P - x3, P);  // p1.x - x3
-        uint256 y3 = mulmod(slope, dx, P);      // slope * (p1.x - x3)
-        y3 = addmod(y3, P - p1.y, P);          // slope * (p1.x - x3) - p1.y
-
+        (uint256 x3, uint256 y3) = ECCMath.pointAdd(p1.x, p1.y, p2.x, p2.y);
         return Point(x3, y3);
     }
 
     /**
-     * @dev Scalar multiplication pada elliptic curve
+     * @dev Scalar multiplication pada elliptic curve. Delegates to
+     * ECCMath.scalarMul (extraction, no behavior change).
      */
     function scalarMul(Point memory p, uint256 scalar) internal view returns (Point memory) {
-        // Reduce scalar modulo N (curve order) to ensure proper range
-        scalar = scalar % N;
-
-        Point memory result = Point(0, 0);
-        Point memory base = p;
-
-        while (scalar > 0) {
-            if (scalar & 1 == 1) {
-                result = pointAdd(result, base);
-            }
-            base = pointAdd(base, base);
-            scalar >>= 1;
-        }
-
-        return result;
+        (uint256 rx, uint256 ry) = ECCMath.scalarMul(p.x, p.y, scalar);
+        return Point(rx, ry);
     }
 
     /**
-     * @dev Modular inverse using Fermat's little theorem via precompiled modexp
-     * a^(-1) ≡ a^(p-2) (mod p) for prime p
+     * @dev Modular inverse. Delegates to ECCMath.modInverse (extraction, no
+     * behavior change).
      */
     function modInverse(uint256 a, uint256 m) internal view returns (uint256) {
-        if (a == 0) return 0;
-
-        // Use modexp precompile (0x05) for efficiency
-        // a^(m-2) mod m
-        return modExp(a, m - 2, m);
+        return ECCMath.modInverse(a, m);
     }
 
     /**
-     * @dev Modular exponentiation using precompiled contract (0x05)
-     * Much more gas efficient than looping
+     * @dev Modular exponentiation. Delegates to ECCMath.modExp (extraction,
+     * no behavior change).
      */
     function modExp(uint256 base, uint256 exponent, uint256 modulus) internal view returns (uint256 result) {
-        assembly {
-            // Free memory pointer
-            let ptr := mload(0x40)
-
-            // Define input layout for modexp precompile
-            // <length_of_BASE> <length_of_EXPONENT> <length_of_MODULUS> <BASE> <EXPONENT> <MODULUS>
-            mstore(ptr, 0x20)                       // Length of BASE (32 bytes)
-            mstore(add(ptr, 0x20), 0x20)            // Length of EXPONENT (32 bytes)
-            mstore(add(ptr, 0x40), 0x20)            // Length of MODULUS (32 bytes)
-            mstore(add(ptr, 0x60), base)            // BASE
-            mstore(add(ptr, 0x80), exponent)        // EXPONENT
-            mstore(add(ptr, 0xa0), modulus)         // MODULUS
-
-            // Call modexp precompile at 0x05
-            let success := staticcall(
-                gas(),          // forward all gas
-                0x05,           // modexp precompile address
-                ptr,            // input start
-                0xc0,           // input size (6 * 32 bytes)
-                ptr,            // output start (reuse same memory)
-                0x20            // output size (32 bytes)
-            )
-
-            // Check if call succeeded
-            if iszero(success) {
-                revert(0, 0)
-            }
-
-            // Load result
-            result := mload(ptr)
-        }
+        return ECCMath.modExp(base, exponent, modulus);
     }
 
     /**
