@@ -2,9 +2,9 @@
   pragma solidity ^0.8.30;
 
   import "forge-std/Script.sol";
-  import "../src/RootChain.sol";
-  import "../src/PlasmaChain.sol";
-  import "../src/PlasmaToken.sol";
+  import "../contracts/src/RootChain.sol";
+  import "../contracts/src/PlasmaChain.sol";
+  import "../contracts/src/PlasmaToken.sol";
 
   contract DeployScript is Script {
       function run() external {

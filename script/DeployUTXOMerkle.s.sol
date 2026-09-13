@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import "forge-std/Script.sol";
-import "../src/PlasmaChainUTXOMerkle.sol";
+import "../contracts/src/PlasmaChainUTXOMerkle.sol";
 
 /**
  * @title DeployL2UTXOMerkle

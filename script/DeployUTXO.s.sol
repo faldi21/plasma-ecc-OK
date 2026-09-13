@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import "forge-std/Script.sol";
-import "../src/RootChainUTXO.sol";
-import "../src/PlasmaChainUTXO.sol";
+import "../contracts/src/RootChainUTXO.sol";
+import "../contracts/src/PlasmaChainUTXO.sol";
 
 contract DeployUTXO is Script {
     function run() external {

@@ -8,17 +8,28 @@ lib/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs — allow research documents
-docs/
-
+# Docs — ignore by default
+docs/*
 
 # Dotenv file
 .env
 
-# Markdown — allow README
+# Markdown — ignore by default, allowlist specific files
+# NOTE: order matters — allowlist entries (!) must come AFTER the last
+# matching ignore rule to take effect (git applies the last matching rule).
 *.md
 !README.md
+!CLAUDE.md
+!docs/CLAUDE.md
+!docs/EXPERIMENT_PRD.md
+!docs/TICKETS.md
+!docs/GAP_ANALYSIS.md
+!docs/REVISION_ROADMAP.md
+!docs/ANALYSIS_PLAN.md
+
 node_modules
 wallet.txt
 .anvil-state.json
 broadcast/
+.env.local
+node_modules/
