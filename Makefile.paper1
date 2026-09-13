@@ -1,0 +1,45 @@
+# Target kampanye Paper 1. Semua diprefiks p1- supaya tidak menabrak Makefile utama.
+# Pakai: make -f Makefile.paper1 p1-e1
+include .env.paper1
+export
+
+RUN_ID ?= $(shell cat $(DATA_ROOT)/LATEST 2>/dev/null)
+
+.PHONY: p1-help p1-freeze p1-e1 p1-e2 p1-e3 p1-e4 p1-tables p1-verify p1-anvil p1-lock
+
+p1-help:
+	@echo "p1-freeze   buat tag + manifest, tetapkan RUN_ID baru"
+	@echo "p1-anvil    jalankan Anvil benchmark di port $(ANVIL_PORT)"
+	@echo "p1-e1/2/3   jalankan kampanye (RUN_ID=$(RUN_ID))"
+	@echo "p1-e4       jalankan test exploit dan ekspor hasilnya"
+	@echo "p1-lock     kunci data mentah jadi read-only"
+	@echo "p1-tables   hasilkan tabel+gambar ke $(TABLES_DIR)"
+	@echo "p1-verify   cek D1-D7"
+
+p1-anvil:
+	anvil --port $(ANVIL_PORT) --gas-limit $(ANVIL_GAS_LIMIT) --chain-id 31337
+
+p1-freeze:
+	@bash scripts/freeze_paper1.sh
+
+p1-e1:
+	npx tsx bench/e1_commit_cost.ts --run-id $(RUN_ID)
+
+p1-e2:
+	npx tsx bench/e2_sync_gas.ts --run-id $(RUN_ID)
+
+p1-e3:
+	npx tsx bench/e3_throughput.ts --run-id $(RUN_ID)
+
+p1-e4:
+	forge test --match-path 'contracts/test/{Exploit,Prop}*' -vv
+
+p1-lock:
+	chmod -w $(DATA_ROOT)/raw/$(RUN_ID)/*.jsonl
+
+p1-tables:
+	python3 analysis/make_tables.py  --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(TABLES_DIR)
+	python3 analysis/make_figures.py --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(FIGURES_DIR)
+
+p1-verify:
+	RUN_ID=$(RUN_ID) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify_paper1.sh
