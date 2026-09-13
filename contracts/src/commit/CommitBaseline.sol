@@ -47,6 +47,15 @@ contract CommitBaseline {
         pendingUtxos.push(id);
     }
 
+    /// @dev Batch version of addPending, for setup efficiency at large n
+    /// (T6, docs/EXPERIMENT_PRD.md 4.3) -- avoids needing one transaction
+    /// per element during the (unmeasured) setup phase.
+    function addPendingBatch(bytes32[] calldata ids) external onlyOperator {
+        for (uint256 i = 0; i < ids.length; i++) {
+            pendingUtxos.push(ids[i]);
+        }
+    }
+
     function _addElement(bytes32 element) internal returns (bool) {
         if (elements[element]) {
             return false; // duplicate guard, same semantics as ECCAccumulator.add

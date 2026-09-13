@@ -40,6 +40,13 @@ contract CommitMerkle {
         pendingUtxos.push(id);
     }
 
+    /// @dev Batch version of addPending (T6, setup efficiency at large n).
+    function addPendingBatch(bytes32[] calldata ids) external onlyOperator {
+        for (uint256 i = 0; i < ids.length; i++) {
+            pendingUtxos.push(ids[i]);
+        }
+    }
+
     function createBlock() external onlyOperator returns (uint256) {
         uint256 len = pendingUtxos.length;
         for (uint256 i = 0; i < len; i++) {

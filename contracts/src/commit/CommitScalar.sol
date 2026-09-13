@@ -43,6 +43,13 @@ contract CommitScalar {
         pendingUtxos.push(id);
     }
 
+    /// @dev Batch version of addPending (T6, setup efficiency at large n).
+    function addPendingBatch(bytes32[] calldata ids) external onlyOperator {
+        for (uint256 i = 0; i < ids.length; i++) {
+            pendingUtxos.push(ids[i]);
+        }
+    }
+
     function _addElement(bytes32 element) internal returns (bool) {
         if (elements[element]) {
             return false;
