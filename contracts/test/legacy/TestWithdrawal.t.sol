@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+// KARANTINA (docs/FAILING_TESTS.md #2.4): fork Sepolia "latest" tanpa pin blok
+// terhadap kontrak legacy RootChain.sol -> hardcoded txHash/witness/blockNumber
+// tidak reproducible; dikecualikan dari forge test default via no_match_path.
 import "forge-std/Test.sol";
-import "../src/RootChain.sol";
+import "../../src/RootChain.sol";
 
 contract TestWithdrawal is Test {
     RootChain rootChain;

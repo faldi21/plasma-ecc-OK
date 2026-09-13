@@ -61,9 +61,11 @@ contract DebugAccumulator {
     }
 
     /**
-     * @dev Test verify with full logging
+     * @dev Debug verify with full logging. Renamed from testVerify to
+     * debugVerify (docs/FAILING_TESTS.md #1.4) so Foundry's test-name
+     * convention no longer auto-fuzzes this debug-only function.
      */
-    function testVerify(
+    function debugVerify(
         bytes32 element,
         ECCAccumulator.Point memory witness
     ) external returns (bool) {

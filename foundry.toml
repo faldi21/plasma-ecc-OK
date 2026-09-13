@@ -7,6 +7,10 @@ via_ir = true
 optimizer = true
 optimizer_runs = 200
 
+# Excludes quarantined legacy tests (docs/FAILING_TESTS.md #2.4): non-deterministic
+# fork-latest tests against the legacy RootChain.sol, not part of the UTXO campaign.
+no_match_path = "contracts/test/legacy/**/*"
+
 remappings = []
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

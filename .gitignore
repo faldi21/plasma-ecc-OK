@@ -26,6 +26,7 @@ docs/*
 !docs/GAP_ANALYSIS.md
 !docs/REVISION_ROADMAP.md
 !docs/ANALYSIS_PLAN.md
+!docs/FAILING_TESTS.md
 
 node_modules
 wallet.txt
