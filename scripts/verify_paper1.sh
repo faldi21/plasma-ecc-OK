@@ -21,7 +21,7 @@ cd "$REPO_ROOT"
 PAPER1_DIR="${PAPER1_DIR:-$HOME/paper1}"
 PAPER_TEX="${PAPER_TEX:-$PAPER1_DIR/main_rev1.tex}"
 TABLES_DIR="${TABLES_DIR:-$PAPER1_DIR/tables}"
-DATA_ROOT="${DATA_ROOT:-data/paper1}"
+DATA_ROOT="${DATA_ROOT:-data}"
 RUN_ID="${RUN_ID:-$(cat "$DATA_ROOT/LATEST" 2>/dev/null || true)}"
 MIN_N="${MIN_N:-30}"          # N minimum per sel (kecuali sel L1)
 MIN_N_L1="${MIN_N_L1:-5}"     # N minimum untuk sel yang mengirim tx L1
