@@ -27,6 +27,7 @@ docs/*
 !docs/REVISION_ROADMAP.md
 !docs/ANALYSIS_PLAN.md
 !docs/FAILING_TESTS.md
+!docs/ECCMATH_REFACTOR_GAS.md
 
 node_modules
 wallet.txt
