@@ -270,6 +270,78 @@ Tambahan yang harus dilaporkan di teks: rasio `asc_naive / asc_1sm`, rasio `asc_
 - SD gas L2 < 1% dari mean (kalau tidak, ada sumber non-determinisme yang harus dijelaskan).
 - `asc_naive` reproduksi ordo besaran lama (~10⁸ gas di n=100). Kalau jauh berbeda dari kampanye lama, selidiki sebelum lanjut.
 
+### 4.6 Dua sel sistem tambahan: `sys.plasma_v0` vs `sys.plasma_eccmath`
+
+**Latar belakang:** verifikasi terpisah (`docs/ECCMATH_REFACTOR_GAS.md`)
+menemukan bahwa ekstraksi `ECCMath.sol` (T1+T2, commit `a5c5991`) mengubah
+gas `PlasmaChainUTXO.createBlock()` secara signifikan (-16.58% di n=10,
+-39.25% di n=100) walau hasilnya (nilai `accumulatorValue`) identik —
+diduga karena penghapusan alokasi memori heap `Point memory` berulang di
+dalam loop 256-iterasi `scalarMul`, yang biayanya kuadratik terhadap total
+memori per-transaksi.
+
+**Keputusan:** kampanye E1 mengukur **kedua** versi sebagai sel terpisah,
+bukan memilih salah satu:
+
+| Sel | Kontrak | Fungsi diukur |
+|---|---|---|
+| `sys.plasma_v0` | `contracts/src/legacy/PlasmaChainUTXOV0.sol` | `createBlock()` |
+| `sys.plasma_eccmath` | `contracts/src/PlasmaChainUTXO.sol` (saat ini) | `createBlock()` |
+
+`PlasmaChainUTXOV0.sol` dan `ECCAccumulatorV0.sol` adalah salinan verbatim
+dari commit `9fdd117` (pra-ekstraksi `ECCMath`), di-vendor ke
+`contracts/src/legacy/`. Lihat header masing-masing file untuk detail
+persis baris mana yang berbeda dari commit aslinya (nol untuk
+`ECCAccumulatorV0.sol`; dua baris — import path dan nama contract — untuk
+`PlasmaChainUTXOV0.sol`, keduanya wajib secara teknis untuk menghindari
+tabrakan nama kompilasi dengan kontrak yang sedang berjalan). Kesetaraan
+**nilai** (bukan biaya) sudah dibuktikan di `contracts/test/
+PlasmaChainUTXOV0Parity.t.sol` untuk n ∈ {1, 10, 100}.
+
+**⚠️ Konteks berbeda dari 7 sel bench (4.1–4.5) — jangan dibandingkan
+lintas konteks:**
+
+| | Sel bench (`bench.commit_*`) | Sel sistem (`sys.plasma_*`) |
+|---|---|---|
+| Tujuan | Mengisolasi biaya **primitif kriptografi** (digest step murni) | Mengukur biaya **sistem nyata yang di-deploy** |
+| `ECCMath.sol` dipakai? | Ya, di semua varian ASC — kode baru, tugasnya isolasi algoritma | Hanya di `sys.plasma_eccmath`; `sys.plasma_v0` sengaja TIDAK pakai (meniru tata letak memori lama apa adanya) |
+| Storage/fungsi sekitar | Minimal, tujuh kontrak tipis, tanpa logika UTXO/exit/transfer lain | Kontrak penuh `PlasmaChainUTXO`, termasuk seluruh state UTXO/transfer/withdrawal yang tidak diukur `bench.*` |
+| Bisa dibandingkan gas absolut dengan sel lain di tabel yang sama? | Ya, sesama `bench.*` | Ya, sesama `sys.*` (`sys.plasma_v0` vs `sys.plasma_eccmath`) |
+| Bisa dibandingkan gas absolut `bench.*` vs `sys.*`? | **Tidak.** Konteks eksekusi berbeda (kontrak minimal vs kontrak penuh) — angka `bench.commit_asc_naive` TIDAK dimaksudkan sama dengan bagian `accumulator.add()` di dalam `sys.plasma_eccmath`, meski algoritmanya sama. | (idem) |
+
+Kalau paper mengutip kedua kelompok sel, harus eksplisit menyebut mana
+yang mana dan mengapa tidak diperbandingkan langsung (lihat tabel di atas).
+
+**Prosedur (RQ tambahan: apakah selisih `sys.plasma_v0` vs
+`sys.plasma_eccmath` tumbuh superlinear terhadap n, sesuai hipotesis
+memory-expansion?):**
+
+```
+untuk n in {10, 25, 50, 100, 200}:
+  untuk sel in {sys.plasma_v0, sys.plasma_eccmath}:
+    N repetisi (sama seperti 4.1–4.5, N >= 30 untuk L2):
+      - deploy kontrak segar
+      - isi n UTXO pending via createDepositUtxoBatch (seed sama dengan bench)
+      - ukur gas createBlock() (gasUsed dari receipt)
+      - kalau bisa diambil: catat jumlah word memori puncak (MSIZE sebelum
+        return, atau dari trace -vvvv/debug_traceTransaction kalau tersedia
+        di Anvil) untuk pemeriksaan langsung hipotesis kuadratik, bukan
+        cuma dugaan dari pola gas
+```
+
+**Kriteria terima tambahan:**
+
+- Kalau hipotesis memory-expansion benar: `(gas_v0[n] − gas_eccmath[n])`
+  harus tumbuh **lebih cepat dari linear** terhadap n (mis. rasio
+  `Δgas[200] / Δgas[10]` jauh lebih besar dari `200/10 = 20`). Kalau
+  ternyata linear atau sublinear, hipotesis di `docs/ECCMATH_REFACTOR_GAS.md`
+  salah dan perlu direvisi — laporkan apa adanya, jangan dipaksakan cocok.
+- `sys.plasma_v0` di n=100 harus reproduksi ordo besaran yang sudah
+  diverifikasi manual di `docs/ECCMATH_REFACTOR_GAS.md` (155,135,414 gas,
+  dari pengukuran satu-kali di luar kampanye resmi) dalam toleransi wajar
+  (variasi struktur data `_ids`/seed bisa geser angka sedikit, tapi ordo
+  besarannya — puluhan hingga ratusan juta gas — harus konsisten).
+
 ---
 
 ## 5. E2 — Overhead sinkronisasi L1 (RQ3, dilema A3)
