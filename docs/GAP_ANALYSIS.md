@@ -330,3 +330,37 @@ kecuali user memilih opsi 2):
 
 Tidak ada file lain yang ditulis di luar `docs/GAP_ANALYSIS.md` pada sesi ini.
 Berhenti di sini menunggu arahan lanjutan.
+
+---
+
+## Update — keputusan path diambil dan dieksekusi (sesi berikutnya)
+
+**Keputusan: Opsi 2** (ubah `foundry.toml`, ikuti PRD apa adanya:
+`contracts/src/`, `contracts/test/`). Sudah dieksekusi:
+
+- Semua `.sol` dipindah dari `src/`→`contracts/src/`, `test/`→`contracts/test/`
+  (via `git mv`, history terjaga untuk 12 dari 14 file; 2 file yang sebelumnya
+  belum ter-track — `src/test/DebugAccumulator.sol`,
+  `test/TestWithdrawal.t.sol` — dipindah dengan `mv` biasa).
+- `foundry.toml`: `src = "contracts/src"`, `test = "contracts/test"`.
+- Semua `script/*.s.sol` yang mengimpor `../src/...` diupdate ke
+  `../contracts/src/...` (8 file).
+- Diverifikasi: `forge build` 0 error (cuma lint warning `asm-keccak256`,
+  tidak relevan). `forge test` menemukan semua test di lokasi baru.
+- 2 test gagal (`DebugAccumulator.testVerify` — fuzz arithmetic
+  overflow/underflow; `TestWithdrawal.testStartExit` — "Invalid transaction
+  proof") — **dikonfirmasi pre-existing**, bukan regresi dari perpindahan:
+  keduanya adalah file yang belum pernah ter-commit sebelum sesi ini
+  (`git log` kosong untuk keduanya di path lama), jadi belum pernah lolos
+  sebagai bagian resmi test suite. Di luar scope T0/restrukturisasi untuk
+  diperbaiki sekarang — dicatat sebagai temuan, bukan dieksekusi.
+- Ditemukan dan diperbaiki: `.gitignore` secara diam-diam memblokir seluruh
+  dokumen kampanye (`CLAUDE.md`, `EXPERIMENT_PRD.md`, `TICKETS.md`,
+  `GAP_ANALYSIS.md` ini sendiri) dari git — sudah ada di disk tapi nol
+  riwayat commit. Diperbaiki (urutan rule `*.md` vs allowlist `docs/`), lalu
+  di-commit.
+- `REVISION_ROADMAP.md` (disebut `CLAUDE.md` tapi hilang dari repo — temuan
+  #6 di atas) disalin dari `~/paper1/` dan ikut di-commit.
+
+**Siap untuk T1** (`docs/TICKETS.md`) dengan path `contracts/src/commit/`,
+`contracts/test/` sesuai literal PRD — tidak perlu penyesuaian path lagi.
