@@ -11,7 +11,15 @@ RUN_ID="$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
 OUT="$DATA_ROOT/raw/$RUN_ID"
 mkdir -p "$OUT"
 
-python3 - "$OUT/manifest.json" <<'PY'
+# Recorded as-run, not just the version: which flags actually bounded this
+# campaign's measurements. In particular, --gas-limit is part of the
+# measured object itself (docs/EXPERIMENT_PRD.md §4.6-adjacent discussion:
+# a createBlock() call that doesn't fit is a RESULT, "exceeds_block_gas_limit",
+# not something to route around by raising the limit) -- so the exact
+# figure used must be traceable from the manifest, not just assumed.
+ANVIL_LAUNCH_ARGS="--port ${ANVIL_PORT} --gas-limit ${ANVIL_GAS_LIMIT} --chain-id 31337"
+
+python3 - "$OUT/manifest.json" "$ANVIL_LAUNCH_ARGS" <<'PY'
 import json, platform, subprocess, sys, hashlib, os
 def sh(c):
     try: return subprocess.check_output(c, shell=True, text=True).strip()
@@ -26,6 +34,7 @@ json.dump({
   "cpu": sh("lscpu | grep 'Model name' | sed 's/.*: *//'"),
   "ram_gb": sh("free -g | awk '/Mem:/{print $2}'"),
   "anvil": sh("anvil --version"),
+  "anvil_launch_args": sys.argv[2],
   "forge": sh("forge --version"),
   "node": sh("node --version"),
   "python": sys.version.split()[0],

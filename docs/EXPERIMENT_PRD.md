@@ -121,6 +121,44 @@ CELL_ID  = <experiment>.<variant>[.<n|T>]        # contoh: e1.asc_1sm.n100, e3.m
 ### 3.2 Skema record mentah (JSONL, satu baris per run)
 
 Wajib sama untuk semua eksperimen; field yang tidak relevan diisi `null`.
+Diperluas (bench/harness/record.ts, harness fix pasca-T5) dengan tiga field
+opsional dan satu perluasan `status` -- semua tambahan bersifat aditif,
+tidak mengubah makna field yang sudah ada:
+
+- **`status`** sekarang salah satu dari `"ok"`, `"error"`,
+  `"exceeds_block_gas_limit"`, `"pass"`, `"fail"`.
+  `"exceeds_block_gas_limit"` adalah **hasil pengukuran**, bukan kegagalan
+  harness: dipakai oleh sel `e1.*`/`sys.*` ketika `createBlock()` butuh gas
+  lebih besar dari batas blok node yang sedang dipakai (dicek via
+  `eth_estimateGas` **sebelum** mengirim transaksi -- kalau estimasi saja
+  sudah ditolak node, transaksi TIDAK PERNAH dikirim, dan batas gas node
+  TIDAK PERNAH dinaikkan hanya supaya sel itu "lolos"). `"pass"`/`"fail"`
+  dipakai sel `e4.*` (exploit/property test), mencerminkan hasil assertion
+  Foundry, bukan status transaksi.
+- **`setup_tx_count`** (number\|null): untuk sel `e1.*`/`sys.*`, jumlah
+  transaksi pada fase setup (funding via `createDepositUtxoBatch`) yang
+  TIDAK ikut terukur di `duration_ms`/`gas_used` cell itu sendiri. Fase
+  setup boleh dipecah jadi beberapa transaksi supaya masing-masing muat di
+  bawah batas gas blok yang sama dengan yang membatasi `createBlock()`
+  yang diukur.
+- **`test_name`** (string\|null) dan **`assert_result`**
+  (`"pass"`\|`"fail"`\|null): untuk sel `e4.*`, nama fungsi test Foundry
+  dan hasil assertion-nya secara eksplisit -- redundan dengan
+  `cell_id`/`status` menurut konvensi penamaan, tapi field terpisah supaya
+  pembaca tidak perlu tahu konvensi itu untuk menemukannya.
+
+**Pemisahan E1 vs E3 (wajib, harness fix pasca-T5):** sel yang mengukur
+biaya `createBlock()` memakai prefix `e1.`/`sys.` dan mengisi
+`function`/`n_elements`/`gas_used`/`gas_limit`; sel throughput memakai
+prefix `e3.` dan mengisi `ops_completed`/`ops_failed`/`ops_retried`/
+`latency_ms`, dengan `function`/`n_elements`/`gas_used` selalu `null`.
+Jendela waktu sel `e3.*` = dari transaksi batch pertama dikirim sampai
+receipt batch terakhir diterima -- **`createBlock()` tidak pernah
+dipanggil di dalam jendela itu, atau di skrip E3 sama sekali.** Kalau
+sebuah cell melakukan setup yang tidak boleh ikut terukur (deploy
+kontrak, funding), ia mengoper `duration_ms` sendiri lewat
+`CellResult.duration_ms` (bench/harness/runner.ts) untuk menimpa waktu
+total `cell.fn()` yang diukur harness secara default.
 
 ```json
 {
@@ -147,7 +185,10 @@ Wajib sama untuk semua eksperimen; field yang tidak relevan diisi `null`.
   "latency_ms": [12.1, 11.8, "..."],
   "status": "ok",
   "notes": null,
-  "env_hash": "sha256:..."
+  "env_hash": "sha256:...",
+  "setup_tx_count": 1,
+  "test_name": null,
+  "assert_result": null
 }
 ```
 
@@ -321,13 +362,32 @@ untuk n in {10, 25, 50, 100, 200}:
   untuk sel in {sys.plasma_v0, sys.plasma_eccmath}:
     N repetisi (sama seperti 4.1–4.5, N >= 30 untuk L2):
       - deploy kontrak segar
-      - isi n UTXO pending via createDepositUtxoBatch (seed sama dengan bench)
-      - ukur gas createBlock() (gasUsed dari receipt)
+      - isi n UTXO pending via createDepositUtxoBatch, dipecah jadi
+        beberapa transaksi setup kalau perlu supaya tiap transaksi muat
+        di bawah batas gas blok node (catat jumlah transaksi setup)
+      - estimasi gas createBlock() lebih dulu (eth_estimateGas) TANPA
+        mengirim transaksi; kalau estimasi > batas gas blok node yang
+        sedang dipakai (lihat manifest: `anvil_launch_args`), catat
+        status "exceeds_block_gas_limit" dan lanjut ke repetisi/sel
+        berikutnya -- JANGAN naikkan batas gas node hanya supaya sel itu
+        lolos (batas itu sendiri bagian dari objek ukur)
+      - kalau muat: kirim transaksi, ukur gas createBlock() (gasUsed dari
+        receipt)
       - kalau bisa diambil: catat jumlah word memori puncak (MSIZE sebelum
         return, atau dari trace -vvvv/debug_traceTransaction kalau tersedia
         di Anvil) untuk pemeriksaan langsung hipotesis kuadratik, bukan
         cuma dugaan dari pola gas
 ```
+
+**Implikasi nyata untuk `sys.plasma_v0` di n besar:** `PlasmaChainUTXOV0.sol`
+masih memanggil `accumulator.add()` per elemen (O(n) scalarMul, seperti
+`sys.plasma_eccmath` sebelum diperbaiki M6). Dengan batas gas blok node
+yang sebenarnya (mis. 300.000.000, dicatat di manifest), sel `sys.plasma_v0`
+pada n yang cukup besar **diperkirakan** akan menghasilkan
+`status: "exceeds_block_gas_limit"`, bukan angka gas — ini valid dan
+diharapkan, bukan kegagalan kampanye. Tabel hasil (`tab:commit-cost`) harus
+melaporkan pada n berapa titik ini terjadi untuk tiap sel, bukan
+menyembunyikannya dengan menaikkan batas gas hanya untuk sel itu.
 
 **Kriteria terima tambahan:**
 

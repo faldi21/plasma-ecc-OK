@@ -1,13 +1,19 @@
 /**
- * T5 smoke test (docs/TICKETS.md): proves the harness (bench/harness/*)
- * works end to end with ONE example cell -- "e3.deferred.T500", i.e. 500
- * sub-operations queued and committed in a single deferred createBlock()
- * call, matching the deferred-commitment semantics this whole project is
- * built around. This is NOT the real E3 campaign (T7's job, with its full
- * 2x2 factorial design, K>=20 accounts, N>=30 repetitions) -- it exists
- * only to prove the harness mechanics (snapshot/warm-up/run/record/revert,
- * per-repetition seeded shuffle, append-only RUN_ID directories) function
- * correctly before T6/T7 build on top of them.
+ * T5 smoke test (docs/TICKETS.md), E3-scoped per the harness fix: proves
+ * the harness (bench/harness) works end to end with ONE example
+ * throughput cell -- "e3.deferred.T500". This measures ONLY the window
+ * from the first batch transaction sent to the last batch receipt
+ * received; createBlock() is NEVER called inside that window (or at all,
+ * in this script) -- committing pending UTXOs is an e1.x / sys.x concern
+ * (see bench/smoke_e1_commit.ts), not e3.x's. "Deferred" here just means
+ * this measures PlasmaChainUTXO's existing architecture, where
+ * createDepositUtxoBatch/transferUtxo never touch the accumulator --
+ * that deferral is already true by construction, not something this
+ * script needs to arrange.
+ *
+ * This is NOT the real E3 campaign (T7's job: full 2x2 factorial design,
+ * K>=20 accounts, N>=30 repetitions) -- it exists only to prove the
+ * harness mechanics work before T6/T7 build on top of them.
  *
  * Run: npx tsx bench/smoke_e3_deferred.ts
  */
@@ -19,6 +25,7 @@ import type { Address, Hex } from "viem";
 import { runCampaign, type Cell, type CellContext, type CellResult } from "./harness/runner.js";
 import { deriveElementIds, loadOperatorPrivateKey } from "./harness/accounts.js";
 import { makeClients, loadAnvilConfig, setBalance } from "./harness/anvil.js";
+import { formatDurationMs } from "./harness/record.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -36,13 +43,19 @@ function loadArtifact(relPath: string): { abi: any; bytecode: Hex } {
   return { abi: json.abi, bytecode: json.bytecode.object as Hex };
 }
 
-const T = 500; // sub-operations for this smoke cell, per the ticket's instruction
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
-async function deferredCell(ctx: CellContext, n: number): Promise<CellResult> {
+const T = 500; // total sub-operations for this smoke cell
+const BATCH_SIZE = 100; // -> 5 batches
+
+async function throughputCell(ctx: CellContext, totalOps: number, batchSize: number): Promise<CellResult> {
   const { abi, bytecode } = loadArtifact("PlasmaChainUTXO.sol/PlasmaChainUTXO.json");
 
-  // Deploy a fresh PlasmaChainUTXO (isolated by the harness's snapshot
-  // taken before this cell runs).
+  // ---- Setup (NOT part of the measured window): deploy a fresh contract. ----
   const deployHash = await ctx.walletClient.deployContract({
     abi,
     bytecode,
@@ -52,54 +65,63 @@ async function deferredCell(ctx: CellContext, n: number): Promise<CellResult> {
   const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
   const contractAddress = deployReceipt.contractAddress as Address;
 
-  // Populate n pending UTXOs deterministically from this run's seed --
-  // "deferred" means these are only queued, no per-element commit.
-  const ids = deriveElementIds(ctx.seed, n);
+  const ids = deriveElementIds(ctx.seed, totalOps);
   const users = ids.map((_, i) => `0x${(0x1000 + i).toString(16).padStart(40, "0")}` as Address);
   const amounts = ids.map(() => 1_000_000_000_000_000_000n); // 1 ether each
   const token = "0x000000000000000000000000000000000000dEaD" as Address;
 
-  const fundHash = await ctx.walletClient.writeContract({
-    address: contractAddress,
-    abi,
-    functionName: "createDepositUtxoBatch",
-    args: [ids, users, token, amounts],
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
-    gas: 900_000_000n,
-  });
-  const fundReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: fundHash });
-  if (fundReceipt.status !== "success") {
-    throw new Error(`createDepositUtxoBatch reverted (tx ${fundHash}) -- pendingUtxos was never populated`);
-  }
+  const idBatches = chunk(ids, batchSize);
+  const userBatches = chunk(users, batchSize);
+  const amountBatches = chunk(amounts, batchSize);
 
-  // Single deferred commit: one createBlock() call for all n queued
-  // elements, not one per element. n=500 with the current (pre-ASC1SM)
-  // PlasmaChainUTXO.sol calls accumulator.add() -> one scalarMul per
-  // element, so this needs a large gas allowance (Anvil started with
-  // --disable-block-gas-limit for exactly this reason).
-  const commitHash = await ctx.walletClient.writeContract({
-    address: contractAddress,
-    abi,
-    functionName: "createBlock",
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
-    gas: 900_000_000n,
-  });
-  const commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
+  // ---- Measured window starts: first batch transaction sent. ----
+  const windowStart = process.hrtime.bigint();
+  const latencyMs: number[] = [];
+  let opsCompleted = 0;
+  let opsFailed = 0;
+  const opsRetried = 0; // this smoke cell does not retry; real E3 (T7) will
+
+  for (let b = 0; b < idBatches.length; b++) {
+    const batchStart = process.hrtime.bigint();
+    try {
+      const hash = await ctx.walletClient.writeContract({
+        address: contractAddress,
+        abi,
+        functionName: "createDepositUtxoBatch",
+        args: [idBatches[b], userBatches[b], token, amountBatches[b]],
+        account: ctx.walletClient.account!,
+        chain: ctx.walletClient.chain,
+        gas: 50_000_000n, // createDepositUtxoBatch never touches the accumulator -- cheap regardless of batch size
+      });
+      const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
+      const batchEnd = process.hrtime.bigint();
+      latencyMs.push(formatDurationMs(batchStart, batchEnd));
+
+      if (receipt.status === "success") {
+        opsCompleted += idBatches[b].length;
+      } else {
+        opsFailed += idBatches[b].length;
+      }
+    } catch {
+      const batchEnd = process.hrtime.bigint();
+      latencyMs.push(formatDurationMs(batchStart, batchEnd));
+      opsFailed += idBatches[b].length;
+    }
+  }
+  // ---- Measured window ends: last batch receipt received. No createBlock() call anywhere in this script. ----
+  const windowEnd = process.hrtime.bigint();
 
   return {
-    function: "createBlock",
-    n_elements: n,
-    gas_used: Number(commitReceipt.gasUsed),
-    gas_limit: 900_000_000,
-    tx_count: 1,
-    tx_hash: commitHash,
-    block_number: Number(commitReceipt.blockNumber),
-    ops_completed: n,
-    ops_failed: 0,
-    ops_retried: 0,
-    status: commitReceipt.status === "success" ? "ok" : "error",
+    duration_ms: formatDurationMs(windowStart, windowEnd), // overrides harness's own timing, which would otherwise include contract deployment above
+    // gas_used / function / n_elements intentionally left undefined ->
+    // null in the record: this is an E3 throughput cell, not a gas
+    // measurement. See bench/smoke_e1_commit.ts for the E1/sys.* cell
+    // that measures createBlock() gas.
+    ops_completed: opsCompleted,
+    ops_failed: opsFailed,
+    ops_retried: opsRetried,
+    latency_ms: latencyMs,
+    status: opsFailed === 0 ? "ok" : "error",
   };
 }
 
@@ -107,7 +129,7 @@ const cells: Cell[] = [
   {
     id: `e3.deferred.T${T}`,
     layer: "L2",
-    fn: (ctx) => deferredCell(ctx, T),
+    fn: (ctx) => throughputCell(ctx, T, BATCH_SIZE),
   },
 ];
 
@@ -115,19 +137,17 @@ async function main() {
   const runId = `${new Date()
     .toISOString()
     .replace(/[-:T.]/g, "")
-    .slice(0, 14)}-smoke`;
+    .slice(0, 14)}-smoke-e3`;
   const dataRoot = process.env.DATA_ROOT || "data";
 
-  console.log(`[smoke] RUN_ID=${runId} T=${T} cells=${cells.map((c) => c.id).join(",")}`);
+  console.log(`[smoke-e3] RUN_ID=${runId} T=${T} batchSize=${BATCH_SIZE} cells=${cells.map((c) => c.id).join(",")}`);
 
   // Fund the operator BEFORE the campaign loop starts (outside any
-  // snapshot), so it survives every per-cell evm_revert -- a fresh Anvil
-  // instance starts every account at zero balance unless it's one of
-  // Anvil's own funded default accounts.
+  // snapshot), so it survives every per-cell evm_revert.
   const anvilConfig = loadAnvilConfig();
   const { publicClient, operatorAccount } = makeClients(anvilConfig, loadOperatorPrivateKey());
   await setBalance(publicClient, operatorAccount.address, "0x21e19e0c9bab2400000" as Hex); // 10,000 ETH
-  console.log(`[smoke] funded operator ${operatorAccount.address}`);
+  console.log(`[smoke-e3] funded operator ${operatorAccount.address}`);
 
   const writer = await runCampaign({
     runId,
@@ -140,9 +160,9 @@ async function main() {
     baseSeed: 0xdeadbeef,
   });
 
-  console.log(`[smoke] wrote records to ${writer.path}`);
+  console.log(`[smoke-e3] wrote records to ${writer.path}`);
   const content = readFileSync(writer.path, "utf8");
-  console.log("[smoke] file contents:");
+  console.log("[smoke-e3] file contents:");
   console.log(content);
 }
 

@@ -19,6 +19,18 @@ export interface CellContext {
 }
 
 export interface CellResult {
+  /**
+   * Overrides the record's duration_ms with a window the cell measured
+   * itself, instead of the harness's own t0/t1 around the whole cell.fn()
+   * call. Needed whenever a cell does unmeasured setup (contract deploy,
+   * funding) before or after the specific window that should be timed --
+   * e.g. E3's "first batch sent to last batch receipt" window must not
+   * include contract deployment, and an E1/sys cell's createBlock() gas
+   * measurement must not include its setup transactions either. Cells
+   * with no such distinction (nothing to exclude) can omit this and let
+   * the harness's own timing apply.
+   */
+  duration_ms?: number;
   function?: string;
   n_elements?: number;
   gas_used?: number;
@@ -33,12 +45,24 @@ export interface CellResult {
   ops_failed?: number;
   ops_retried?: number;
   latency_ms?: number[];
-  status: "ok" | "error";
+  status: "ok" | "error" | "exceeds_block_gas_limit" | "pass" | "fail";
   notes?: string;
+  setup_tx_count?: number;
+  test_name?: string;
+  assert_result?: "pass" | "fail";
 }
 
 export interface Cell {
-  id: string; // cell_id, e.g. "e1.asc_1sm.n100" or "e3.deferred.T500"
+  // cell_id naming convention (not enforced by the harness, but relied on
+  // by scripts/verify_paper1.sh and the E3/E1 separation this file's
+  // callers must respect): "e1.<variant>.n<N>" / "sys.<system>.n<N>" for
+  // cells that measure createBlock() gas cost (bounded by the node's real
+  // block gas limit -- see the "exceeds_block_gas_limit" status);
+  // "e3.<placement>.T<T>" for throughput cells, which measure ONLY the
+  // batch-submission-to-receipt window and must never include a
+  // createBlock() call in what they time; "e4.<Contract>.<test>" for
+  // exploit/property test results (see bench/e4_exploits.ts).
+  id: string;
   layer: "L1" | "L2" | null;
   fn: (ctx: CellContext) => Promise<CellResult>;
 }
@@ -93,7 +117,7 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
           repetition: r,
           seed: repSeed,
           started_at: startedAt,
-          duration_ms: formatDurationMs(t0, t1),
+          duration_ms: result.duration_ms ?? formatDurationMs(t0, t1),
           layer: cell.layer,
           function: result.function ?? null,
           n_elements: result.n_elements ?? null,
@@ -112,6 +136,9 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
           status: result.status,
           notes: result.notes ?? null,
           env_hash: envHash,
+          setup_tx_count: result.setup_tx_count ?? null,
+          test_name: result.test_name ?? null,
+          assert_result: result.assert_result ?? null,
         };
         writer.write(record);
       } finally {

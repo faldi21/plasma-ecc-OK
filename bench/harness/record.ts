@@ -9,7 +9,25 @@ import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import path from "node:path";
 
-/** docs/EXPERIMENT_PRD.md §3.2's record schema, verbatim. */
+/**
+ * docs/EXPERIMENT_PRD.md §3.2's record schema, extended additively (all
+ * original fields unchanged; new fields are optional/nullable so any
+ * reader written against the original schema still works):
+ *
+ *   - status gains "exceeds_block_gas_limit": the expected, DATA outcome
+ *     (not a bug) when a cell_id under e1.* or sys.* needs more gas than
+ *     the node's configured block gas limit -- see anvil.ts/runner.ts.
+ *     "pass"/"fail" cover E4 exploit/property tests, whose pass/fail
+ *     comes from Foundry test assertions, not a transaction receipt.
+ *   - setup_tx_count: for e1.x / sys.x cells, how many transactions the
+ *     (unmeasured) setup phase took -- relevant because setup may need to
+ *     be split into multiple transactions to fit under the same block gas
+ *     limit that bounds the measured createBlock() call itself.
+ *   - test_name / assert_result: for e4.x cells, which Foundry test
+ *     function this record is for, and whether its assertions passed --
+ *     redundant with cell_id/status by convention, but explicit so a
+ *     reader doesn't have to know that convention to find them.
+ */
 export interface BenchRecord {
   run_id: string;
   cell_id: string;
@@ -32,9 +50,12 @@ export interface BenchRecord {
   ops_failed: number | null;
   ops_retried: number | null;
   latency_ms: number[] | null;
-  status: "ok" | "error";
+  status: "ok" | "error" | "exceeds_block_gas_limit" | "pass" | "fail";
   notes: string | null;
   env_hash: string;
+  setup_tx_count?: number | null;
+  test_name?: string | null;
+  assert_result?: "pass" | "fail" | null;
 }
 
 function sh(cmd: string): string | null {
