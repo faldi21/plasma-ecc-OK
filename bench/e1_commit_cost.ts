@@ -59,6 +59,7 @@ import { deriveElementIds, loadOperatorPrivateKey } from "./harness/accounts.js"
 import { makeClients, loadAnvilConfig, setBalance } from "./harness/anvil.js";
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor } from "./harness/rng.js";
+import { requireRunId, assertRpcReachable } from "./harness/guards.js";
 
 const { ec: EC } = pkg;
 
@@ -785,10 +786,11 @@ async function runL1AnchorCampaign(writer: RecordWriter, runId: string, dataRoot
 // ---------------------------------------------------------------- main
 
 async function main(): Promise<void> {
-  const runId =
-    process.env.RUN_ID || `e1_${DRY_RUN ? "dryrun_" : ""}${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const runId = requireRunId();
   const dataRoot = path.join(REPO_ROOT, process.env.DATA_ROOT || "data");
   const outputFilename = "e1_commit_cost.jsonl";
+
+  await assertRpcReachable(loadAnvilConfig().rpcUrl);
 
   const cells: Cell[] = [];
   for (const variant of COMMIT_VARIANTS) {

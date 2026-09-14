@@ -64,6 +64,7 @@ import { deriveAccountKey, deriveElementIds, loadOperatorPrivateKey } from "./ha
 import { makeClients, loadAnvilConfig, setBalance } from "./harness/anvil.js";
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor, shuffle, mulberry32 } from "./harness/rng.js";
+import { requireRunId, assertRpcReachable } from "./harness/guards.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -448,7 +449,7 @@ async function runE3Cell(
 // ---------------------------------------------------------------- main
 
 async function main(): Promise<void> {
-  const runId = process.env.RUN_ID || `e3_${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const runId = requireRunId();
   const dataRoot = path.join(REPO_ROOT, process.env.DATA_ROOT || "data");
   const outputFilename = "e3_throughput.jsonl";
 
@@ -473,9 +474,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const anvilConfig = loadAnvilConfig();
+  await assertRpcReachable(anvilConfig.rpcUrl);
+
   const writer = new RecordWriter(dataRoot, runId, outputFilename);
   const envHash = computeEnvHash(REPO_ROOT);
-  const anvilConfig = loadAnvilConfig();
 
   for (let r = 0; r < REPETITIONS; r++) {
     const repSeed = seedFor(BASE_SEED, r);

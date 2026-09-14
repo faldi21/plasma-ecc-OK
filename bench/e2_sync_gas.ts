@@ -88,6 +88,7 @@ import { deriveAccounts, deriveElementIds, loadOperatorPrivateKey } from "./harn
 import { makeClients, loadAnvilConfig, snapshot, revert } from "./harness/anvil.js";
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor } from "./harness/rng.js";
+import { requireRunId, assertRpcReachable } from "./harness/guards.js";
 
 const { ec: EC } = pkg;
 
@@ -785,10 +786,11 @@ async function runFinalizeExitCampaign(writer: RecordWriter, runId: string, envH
 // ---------------------------------------------------------------- main
 
 async function main(): Promise<void> {
-  const runId =
-    process.env.RUN_ID || `e2_${DRY_RUN ? "dryrun_" : ""}${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const runId = requireRunId();
   const dataRoot = path.join(REPO_ROOT, process.env.DATA_ROOT || "data");
   const outputFilename = "e2_sync_gas.jsonl";
+
+  await assertRpcReachable(loadAnvilConfig().rpcUrl);
 
   mkdirSync(path.join(dataRoot, "raw"), { recursive: true });
   const writer = new RecordWriter(dataRoot, runId, outputFilename);

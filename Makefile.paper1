@@ -33,15 +33,19 @@ p1-freeze:
 	@bash scripts/freeze_paper1.sh
 
 p1-e1:
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 	npx tsx bench/e1_commit_cost.ts --run-id $(RUN_ID)
 
 p1-e2:
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 	npx tsx bench/e2_sync_gas.ts --run-id $(RUN_ID)
 
 p1-e3:
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 	npx tsx bench/e3_throughput.ts --run-id $(RUN_ID)
 
 p1-e4:
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 	forge test --match-path 'contracts/test/{Exploit,Prop}*' -vv
 
 p1-lock:

@@ -17,12 +17,16 @@ freeze: p1-freeze
 anvil: p1-anvil
 
 e1: p1-e1
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 
 e2: p1-e2
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 
 e3: p1-e3
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 
 e4: p1-e4
+	@if [ -z "$(RUN_ID)" ]; then echo "RUN_ID kosong. make freeze dulu."; exit 1; fi
 
 lock: p1-lock
 
