@@ -11,8 +11,9 @@ lib/
 # Docs — ignore by default
 docs/*
 
-# Dotenv file
+# Dotenv file(s) -- every .env variant, not just the exact name
 .env
+.env.*
 
 # Markdown — ignore by default, allowlist specific files
 # NOTE: order matters — allowlist entries (!) must come AFTER the last
