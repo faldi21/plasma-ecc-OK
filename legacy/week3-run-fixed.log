@@ -1,0 +1,314 @@
+🚀 Starting Week 3 Stress Testing Framework
+
+Make sure Anvil is running on port 8545:
+  anvil --port 8545
+
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║           WEEK 3: COMPREHENSIVE STRESS TESTING SUITE                      ║
+║   Plasma UTXO Testing Framework - Extreme Load & Edge Cases               ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+🔍 Checking prerequisites...
+✅ Prerequisites met
+
+✅ Environment loaded from .env
+📁 Data directory: /home/faldi/plasma-ecc-OK/data/research
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 1: PROGRESSIVE LOAD TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing with progressive load escalation:
+  100 TX (baseline) → 250 TX → 500 TX → 1000 TX → 2000 TX (extreme)
+
+(node:62749) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[dotenv@17.2.3] injecting env (27) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+╔════════════════════════════════════════════════════╗
+║    WEEK 3: PROGRESSIVE STRESS TESTING - START      ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Sender: 0x62dc14Fe819A241e176ee6A813f51045d04A0cda
+   Receiver: 0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76
+   Stop on Failure: true
+   Failure Threshold: 25%
+
+
+⏳ PHASE 1: Baseline high volume
+   Transactions: 100
+   Batch Size: 20
+
+   Batch 1/5: 10..20.. 43.01 TPS
+   Batch 2/5: 30..40.. 60.98 TPS
+   Batch 3/5: 50..60.. 65.79 TPS
+   Batch 4/5: 70..80.. 70.42 TPS
+   Batch 5/5: 90..100.. 70.67 TPS
+
+   📊 Phase 1 Summary:
+      Total: 100
+      Success: 100 (100.00%)
+      Failed: 0
+      TPS: 60.1
+      Avg Latency: 16.64 ms
+
+⏳ PHASE 2: 2.5x increase
+   Transactions: 250
+   Batch Size: 25
+
+   Batch 1/10: 10..20.. 70.42 TPS
+   Batch 2/10: 30..40..50.. 73.31 TPS
+   Batch 3/10: 60..70.. 71.84 TPS
+   Batch 4/10: 80..90..100.. 77.88 TPS
+   Batch 5/10: 110..120.. 77.16 TPS
+   Batch 6/10: 130..140..150.. 5.80 TPS
+   Batch 7/10: 160..170.. 81.43 TPS
+   Batch 8/10: 180..190..200.. 82.24 TPS
+   Batch 9/10: 210..220.. 82.78 TPS
+   Batch 10/10: 230..240..250.. 86.51 TPS
+
+   📊 Phase 2 Summary:
+      Total: 250
+      Success: 250 (100.00%)
+      Failed: 0
+      TPS: 34.71
+      Avg Latency: 28.81 ms
+
+⏳ PHASE 3: 5x increase
+   Transactions: 500
+   Batch Size: 50
+
+   Batch 1/10: 10..20..30..40..50.. 87.57 TPS
+   Batch 2/10: 60..70..80..90..100.. 10.91 TPS
+   Batch 3/10: 110..120..130..140..150.. 83.75 TPS
+   Batch 4/10: 160..170..180..190..200.. 87.26 TPS
+   Batch 5/10: 210..220..230..240..250.. 85.76 TPS
+   Batch 6/10: 260..270..280..290..300.. 86.51 TPS
+   Batch 7/10: 310..320..330..340..350.. 84.60 TPS
+   Batch 8/10: 360..370..380..390..400.. 88.18 TPS
+   Batch 9/10: 410..420..430..440..450.. 87.87 TPS
+   Batch 10/10: 460..470..480..490..500.. 89.29 TPS
+
+   📊 Phase 3 Summary:
+      Total: 500
+      Success: 500 (100.00%)
+      Failed: 0
+      TPS: 51.16
+      Avg Latency: 19.54 ms
+
+⏳ PHASE 4: 10x increase
+   Transactions: 1000
+   Batch Size: 100
+
+   Batch 1/10: 10..20..30..40..50..60..70..80..90..100.. 10.97 TPS
+   Batch 2/10: 110..120..130..140..150..160..170..180..190..200.. 85.69 TPS
+   Batch 3/10: 210..220..230..240..250..260..270..280..290..300.. 78.68 TPS
+   Batch 4/10: 310..320..330..340..350..360..370..380..390..400.. 77.64 TPS
+   Batch 5/10: 410..420..430..440..450..460..470..480..490..500.. 75.82 TPS
+   Batch 6/10: 510..520..530..540..550..560..570..580..590..600.. 11.47 TPS
+   Batch 7/10: 610..620..630..640..650..660..670..680..690..700.. 85.25 TPS
+   Batch 8/10: 710..720..730..740..750..760..770..780..790..800.. 90.25 TPS
+   Batch 9/10: 810..820..830..840..850..860..870..880..890..900.. 87.03 TPS
+   Batch 10/10: 910..920..930..940..950..960..970..980..990..1000.. 85.98 TPS
+
+   📊 Phase 4 Summary:
+      Total: 1000
+      Success: 1000 (100.00%)
+      Failed: 0
+      TPS: 36.4
+      Avg Latency: 27.46 ms
+
+⏳ PHASE 5: Extreme stress
+   Transactions: 2000
+   Batch Size: 200
+
+   Batch 1/10: 10..20..30..40..50..60..70..80..90..100..110..120..130..140..150..160..170..180..190..200.. 91.16 TPS
+   Batch 2/10: 210..220..230..240..250..260..270..280..290..300..310..320..330..340..350..360..370..380..390..400.. 20.86 TPS
+   Batch 3/10: 410..420..430..440..450..460..470..480..490..500..510..520..530..540..550..560..570..580..590..600.. 91.91 TPS
+   Batch 4/10: 610..620..630..640..650..660..670..680..690..700..710..720..730..740..750..760..770..780..790..800.. 88.97 TPS
+   Batch 5/10: 810..820..830..840..850..860..870..880..890..900..910..920..930..940..950..960..970..980..990..1000.. 87.41 TPS
+   Batch 6/10: 1010..1020..1030..1040..1050..1060..1070..1080..1090..1100..1110..1120..1130..1140..1150..1160..1170..1180..1190..1200.. 91.79 TPS
+   Batch 7/10: 1210..1220..1230..1240..1250..1260..1270..1280..1290..1300..1310..1320..1330..1340..1350..1360..1370..1380..1390..1400.. 91.62 TPS
+   Batch 8/10: 1410..1420..1430..1440..1450..1460..1470..1480..1490..1500..1510..1520..1530..1540..1550..1560..1570..1580..1590..1600.. 89.09 TPS
+   Batch 9/10: 1610..1620..1630..1640..1650..1660..1670..1680..1690..1700..1710..1720..1730..1740..1750..1760..1770..1780..1790..1800.. 19.67 TPS
+   Batch 10/10: 1810..1820..1830..1840..1850..1860..1870..1880..1890..1900..1910..1920..1930..1940..1950..1960..1970..1980..1990..2000.. 87.41 TPS
+
+   📊 Phase 5 Summary:
+      Total: 2000
+      Success: 2000 (100.00%)
+      Failed: 0
+      TPS: 53.25
+      Avg Latency: 18.77 ms
+
+╔════════════════════════════════════════════════════╗
+║           📊 STRESS TEST COMPLETE                 ║
+╚════════════════════════════════════════════════════╝
+
+📈 Overall Summary:
+   Total Phases: 5
+   Total Transactions: 3850
+   Successful: 3850
+   Failed: 0
+   Min TPS: 34.71
+   Max TPS: 60.10
+   Avg TPS: 47.12
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-2026-01-29-014219.json
+
+
+✅ Progressive load testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 2: EDGE CASES & ERROR CONDITION TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing error conditions:
+  • Insufficient balance
+  • Invalid addresses
+  • Large values
+  • Rapid nonce increments
+  • Zero value transfers
+  • Self transfers
+
+(node:63963) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[dotenv@17.2.3] injecting env (27) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+╔════════════════════════════════════════════════════╗
+║       WEEK 3: EDGE CASES & ERROR TESTING           ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Sender: 0x62dc14Fe819A241e176ee6A813f51045d04A0cda
+
+🧪 Running edge case tests...
+
+Test 1: Insufficient Balance
+Test 2: Invalid Address
+Test 3: Large Value
+Test 4: Rapid Nonce
+Test 5: Zero Value
+Test 6: Self Transfer
+
+╔════════════════════════════════════════════════════╗
+║              📊 EDGE CASE SUMMARY                 ║
+╚════════════════════════════════════════════════════╝
+
+✅ Passed: 5/6
+❌ Failed: 1/6
+
+✓ insufficient-balance: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✓ invalid-address: failure
+  Error: Address "0xinvalid" is invalid.
+
+- Address must be a hex value of 20 bytes (40 hex characters).
+- Ad
+✓ large-value: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✗ rapid-nonce: failure
+  Error: Nonce provided for the transaction is lower than the current nonce of the account.
+Try increasing th
+✓ zero-value: success
+✓ same-sender-receiver: success
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/edge-cases-2026-01-29-014226.json
+
+
+✅ Edge case testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 3: ECC ACCUMULATOR STRESS TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing accumulator performance under load:
+  • Update time per transaction
+  • Memory footprint
+  • Consistency verification
+
+(node:64109) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[dotenv@17.2.3] injecting env (27) from .env -- tip: 📡 add observability to secrets: https://dotenvx.com/ops
+╔════════════════════════════════════════════════════╗
+║      WEEK 3: ACCUMULATOR STRESS TESTING            ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Test TX Count: 500
+   Snapshot Interval: 50
+   Sender: 0x62dc14Fe819A241e176ee6A813f51045d04A0cda
+   Receiver: 0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76
+
+🚀 Executing transactions and monitoring accumulator...
+
+   10/500..   20/500..   30/500..   40/500..   50/500..[snapshot]   60/500..   70/500..   80/500..   90/500..   100/500..[snapshot]   110/500..   120/500..   130/500..   140/500..   150/500..[snapshot]   160/500..   170/500..   180/500..   190/500..   200/500..[snapshot]   210/500..   220/500..   230/500..   240/500..   250/500..[snapshot]   260/500..   270/500..   280/500..   290/500..   300/500..[snapshot]   310/500..   320/500..   330/500..   340/500..   350/500..[snapshot]   360/500..   370/500..   380/500..   390/500..   400/500..[snapshot]   410/500..   420/500..   430/500..   440/500..   450/500..[snapshot]   460/500..   470/500..   480/500..   490/500..   500/500..[snapshot]
+
+╔════════════════════════════════════════════════════╗
+║         📊 ACCUMULATOR STRESS SUMMARY             ║
+╚════════════════════════════════════════════════════╝
+
+📈 Transaction Statistics:
+   Total TX: 500
+   Successful: 500
+   Failed: 0
+   Success Rate: 100.00%
+
+⏱️  Accumulator Performance:
+   Avg Update Time: 0.60 ms
+   Max Update Time: 1.00 ms
+   Min Update Time: 0.00 ms
+
+💾 Memory Analysis:
+   Snapshots Taken: 10
+   Avg Memory Growth: 12771.56 bytes per interval
+
+✅ Consistency Checks:
+   Checks Performed: 10
+   Failures: 0
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/accumulator-stress-2026-01-29-014241.json
+
+
+✅ Accumulator stress testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+RESULTS SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+📊 Generated benchmark files:
+   Stress test files: 12
+   Edge case files: 4
+   Accumulator test files: 4
+
+📁 Full path: /home/faldi/plasma-ecc-OK/data/research
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                        NEXT STEPS                                         ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+1. Review stress test results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-*.json | jq '.summary'
+
+2. View edge case results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/edge-cases-*.json | jq '.results'
+
+3. Analyze accumulator performance:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/accumulator-stress-*.json | jq '.statistics'
+
+4. Compare all three weeks:
+   # Week 1 baseline TPS
+   jq '.performanceMetrics.tps' /home/faldi/plasma-ecc-OK/data/research/analysis/week1-transfer-benchmark-*.json
+   # Week 2 load test TPS
+   jq '.metrics.tps' /home/faldi/plasma-ecc-OK/data/research/analysis/load-test-*.json
+   # Week 3 progressive test (max TPS)
+   jq '.summary.maxTps' /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-*.json
+
+5. For Python/R analysis:
+   cp /home/faldi/plasma-ecc-OK/data/research/benchmarks/*.json /path/to/analysis/tools/
+
+✨ Week 3 stress testing complete!
+

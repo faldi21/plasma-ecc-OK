@@ -38,3 +38,16 @@ node_modules/
 .venv/
 __pycache__/
 *.pyc
+
+# Local Anvil/relay state copies and backups (not campaign data — pre-freeze
+# cleanup, docs/TICKETS.md working-tree audit)
+.anvil-state*.json
+*.backup
+.vscode/
+
+# Local state dumps that live directly under data/ (anvil/relay/tps-history
+# snapshots) -- the actual campaign data lives in data/raw|processed|receipts/
+# subdirectories and must stay tracked, hence the negation below.
+data/*.json
+!data/paper1/
+backend/data/plasma-state.json

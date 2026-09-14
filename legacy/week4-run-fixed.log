@@ -1,0 +1,158 @@
+🚀 Starting Week 4 UTXO Stress Testing Framework
+
+Make sure Anvil is running on port 8545:
+  anvil --port 8545
+
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║         WEEK 4: REAL UTXO STRESS TESTING SUITE                            ║
+║   Plasma UTXO Testing Framework - Real Token Transfer Load                ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+🔍 Checking prerequisites...
+✅ Prerequisites met
+
+✅ Environment loaded from .env
+📁 Data directory: /home/faldi/plasma-ecc-OK/data/research
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 1: REAL UTXO STRESS TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing with progressive UTXO transfer load:
+  50 transfers (baseline) → 100 → 200 → 500 transfers (extreme)
+
+(node:97484) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[dotenv@17.2.3] injecting env (27) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+╔════════════════════════════════════════════════════╗
+║      WEEK 4: UTXO STRESS TESTING - START            ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   PlasmaChainUTXO: 0x2860763ac53e487b1521dfd6510f6780b2d86223
+   PlasmaToken: 0x9E7088C23e5C0B2D02cD7886A1BDbC7FE8b71016
+   Users: 3
+
+🚀 Executing UTXO transfers and monitoring accumulator...
+
+
+⏳ PHASE 1: Baseline UTXO transfers
+   Transfers: 50
+   Batch Size: 10
+
+   Batch 1/5: 10.. 0.21 TPS
+   Batch 2/5: 20.. 0.21 TPS
+   Batch 3/5: 30.. 0.22 TPS
+   Batch 4/5: 40.. 0.21 TPS
+   Batch 5/5: 50.. 0.21 TPS
+
+
+   📊 Phase 1 Summary:
+      Total: 50
+      Success: 50 (100.00%)
+      Failed: 0
+      TPS: 0.21
+      Avg Latency: 4655.42 ms
+
+⏳ PHASE 2: 2x UTXO transfers
+   Transfers: 100
+   Batch Size: 20
+
+   Batch 1/5: 10..20.. 0.22 TPS
+   Batch 2/5: 30..40.. 0.22 TPS
+   Batch 3/5: 50..60.. 0.21 TPS
+   Batch 4/5: 70..80.. 0.21 TPS
+   Batch 5/5: 90..100.. 0.21 TPS
+
+
+   📊 Phase 2 Summary:
+      Total: 100
+      Success: 100 (100.00%)
+      Failed: 0
+      TPS: 0.21
+      Avg Latency: 4658.44 ms
+
+⏳ PHASE 3: 4x UTXO transfers
+   Transfers: 200
+   Batch Size: 50
+
+   Batch 1/4: 10..20..30..40..50.. 0.21 TPS
+   Batch 2/4: 60..70..80..90..100.. 0.21 TPS
+   Batch 3/4: 110..120..130..140..150.. 0.21 TPS
+   Batch 4/4: 160..170..180..190..200.. 0.21 TPS
+
+
+   📊 Phase 3 Summary:
+      Total: 200
+      Success: 200 (100.00%)
+      Failed: 0
+      TPS: 0.21
+      Avg Latency: 4691.765 ms
+
+⏳ PHASE 4: 10x UTXO transfers
+   Transfers: 500
+   Batch Size: 100
+
+   Batch 1/5: 10..20..30..40..50..60..70..80..90..100.. 0.21 TPS
+   Batch 2/5: 110..120..130..140..150..160..170..180..190..200.. 0.21 TPS
+   Batch 3/5: 210..220..230..240..250..260..270..280..290..300.. 0.21 TPS
+   Batch 4/5: 310..320..330..340..350..360..370..380..390..400.. 0.21 TPS
+   Batch 5/5: 410..420..430..440..450..460..470..480..490..500.. 0.21 TPS
+
+
+   📊 Phase 4 Summary:
+      Total: 500
+      Success: 500 (100.00%)
+      Failed: 0
+      TPS: 0.21
+      Avg Latency: 4775.242 ms
+
+╔════════════════════════════════════════════════════╗
+║           📊 UTXO STRESS TEST COMPLETE             ║
+╚════════════════════════════════════════════════════╝
+
+📈 Overall Summary:
+   Total Phases: 4
+   Total Transfers: 850
+   Successful: 850
+   Failed: 0
+   Min TPS: 0.21
+   Max TPS: 0.21
+   Avg TPS: 0.21
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/utxo-stress-summary-2026-01-29-044918.json
+
+
+✅ UTXO stress testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+RESULTS SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+📊 Generated benchmark files:
+   UTXO stress test files: 10
+
+📁 Full path: /home/faldi/plasma-ecc-OK/data/research
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                        NEXT STEPS                                         ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+1. Review UTXO stress test results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/utxo-stress-summary-*.json | jq '.summary'
+
+2. View per-phase results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/utxo-stress-summary-*.json | jq '.phases[]'
+
+3. Compare with Week 3 (raw ETH) vs Week 4 (real UTXO):
+   echo "Week 3 ETH TPS: 0"
+   echo "Week 4 UTXO TPS: 0"
+
+4. For Python/R analysis:
+   cp /home/faldi/plasma-ecc-OK/data/research/benchmarks/utxo-stress-*.json /path/to/analysis/tools/
+
+✨ Week 4 UTXO stress testing complete!
+

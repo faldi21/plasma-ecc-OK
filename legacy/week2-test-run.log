@@ -1,0 +1,407 @@
+
+╔════════════════════════════════════════════════════╗
+║           WEEK 2: BENCHMARKING SUITE              ║
+║   Plasma UTXO Testing Framework - Anvil           ║
+║      Advanced Metrics & Load Testing              ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Checking prerequisites...
+✅ Prerequisites met
+
+✅ Environment loaded from .env
+📁 Data directory: /home/faldi/plasma-ecc-OK/data/research/
+
+═══════════════════════════════════════════════════════
+PHASE 1: LOAD TESTING
+═══════════════════════════════════════════════════════
+
+Configuration:
+  TX per Batch: 20
+  Concurrent Batches: 3
+  Total TX: 60
+
+(node:41426) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+╔════════════════════════════════════════════════════╗
+║    WEEK 2: LOAD TESTING (SIMPLIFIED) - START       ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Sender: 0xF89e9DAD9B8c5382C0729928542ABFAA64b67dDA
+   Receiver: 0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76
+   TX per Batch: 20
+   Concurrent Batches: 3
+   Total TX: 60
+
+🚀 Executing load test...
+
+   ⏳ Batch 1/3...
+   ✓ Batch complete: 20 TX in 4.43s (4.52 TPS)
+   ⏳ Batch 2/3...
+   ✓ Batch complete: 20 TX in 0.30s (67.11 TPS)
+   ⏳ Batch 3/3...
+   ✓ Batch complete: 20 TX in 0.29s (69.44 TPS)
+
+╔════════════════════════════════════════════════════╗
+║              📊 LOAD TEST SUMMARY                 ║
+╚════════════════════════════════════════════════════╝
+
+📈 Results:
+   Total TX: 60
+   Successful: 60
+   Failed: 0
+   Success Rate: 100.00%
+
+⏱️  Performance:
+   Total Duration: 5.02s
+   Average TPS: 11.95
+   Min Latency: 11.00ms
+   Avg Latency: 83.55ms
+   Max Latency: 4018.00ms
+
+⛽ Gas:
+   Total: 1260000
+   Avg per TX: 21000
+
+📁 Reports saved:
+   JSON: /home/faldi/plasma-ecc-OK/data/research/analysis/load-test-2026-01-22-053121.json
+
+
+═══════════════════════════════════════════════════════
+PHASE 2: STATE ANALYSIS
+═══════════════════════════════════════════════════════
+
+Configuration:
+  Block Range: 0 - 9999
+  Sample Interval: 100
+
+(node:41492) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+╔════════════════════════════════════════════════════╗
+║    WEEK 2: STATE ANALYSIS - PHASE START            ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Contract: 0x2860763ac53e487b1521dfd6510f6780b2d86223
+   Block Range: 0 - 9999
+   Sample Interval: 100
+
+📊 Taking state snapshots from block 0 to 915...
+
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not analyze UTXO set size: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0x07ee00b8
+
+Details: execution reverted
+Version: viem@2.39.2
+Could not query accumulator value: Execution reverted for an unknown reason.
+
+Raw Call Arguments:
+  from:  0x2860763ac53e487b1521dfd6510f6780b2d86223
+  to:    0x2860763ac53e487b1521dfd6510f6780b2d86223
+  data:  0xe4fc6e5f
+
+Details: execution reverted
+Version: viem@2.39.2
+   ✓ Snapshot 10: Block 900 (UTXO: 0, Total: 0 bytes)
+
+✅ Collected 10 state snapshots
+
+✓ State growth metric saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/state-growth-2026-01-22-053128.json
+╔════════════════════════════════════════════════════╗
+║           📊 STATE ANALYSIS SUMMARY               ║
+╚════════════════════════════════════════════════════╝
+
+🗂️  UTXO Statistics:
+   Final Count: 0
+   Min Count: 0
+   Max Count: 0
+
+📦 Accumulator:
+   Base Size: 0 bytes
+   Current Size: 0 bytes
+
+📈 State Growth:
+   Total Growth: 0 bytes
+   Avg per Snapshot: 0.00 bytes
+   Avg per TX: 0.00 bytes
+   Max Growth Rate: 0 bytes
+
+🗜️  Compression:
+   Compression Ratio: 1.0000x
+
+📁 Report saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/state-growth-2026-01-22-053128.json
+
+
+═══════════════════════════════════════════════════════
+RESULTS SUMMARY
+═══════════════════════════════════════════════════════
+
+📊 Collected data:
+   ✓ deployment-2026-01-19.json
+   ✓ deployment-2026-01-20-012349.json
+   ✓ deployment-2026-01-20-012614.json
+   ✓ deployment-2026-01-22-042751.json
+   ✓ load-test-2026-01-22-044021.json
+   ✓ load-test-2026-01-22-044206.json
+   ✓ load-test-2026-01-22-044257.json
+   ✓ load-test-2026-01-22-044311.json
+   ✓ load-test-2026-01-22-044405.json
+   ✓ load-test-2026-01-22-044501.json
+   ✓ load-test-2026-01-22-044535.json
+   ✓ load-test-2026-01-22-044550.json
+   ✓ load-test-2026-01-22-044604.json
+   ✓ load-test-2026-01-22-044632.json
+   ✓ performance-2026-01-19.json
+   ✓ performance-2026-01-20-012356.json
+   ✓ performance-2026-01-20-012622.json
+   ✓ performance-2026-01-22-042758.json
+   ✓ state-growth-2026-01-22-043459.json
+   ✓ state-growth-2026-01-22-044023.json
+   ✓ state-growth-2026-01-22-044212.json
+   ✓ state-growth-2026-01-22-044300.json
+   ✓ state-growth-2026-01-22-044313.json
+   ✓ state-growth-2026-01-22-044407.json
+   ✓ state-growth-2026-01-22-044507.json
+   ✓ state-growth-2026-01-22-044537.json
+   ✓ state-growth-2026-01-22-044553.json
+   ✓ state-growth-2026-01-22-044606.json
+   ✓ state-growth-2026-01-22-044635.json
+   ✓ state-growth-2026-01-22-044735.json
+   ✓ state-growth-2026-01-22-044759.json
+   ✓ state-growth-2026-01-22-044840.json
+   ✓ state-growth-2026-01-22-044953.json
+   ✓ state-growth-2026-01-22-045154.json
+   ✓ state-growth-2026-01-22-045214.json
+   ✓ state-growth-2026-01-22-045223.json
+   ✓ state-growth-2026-01-22-045252.json
+   ✓ state-growth-2026-01-22-045514.json
+   ✓ state-growth-2026-01-22-045750.json
+   ✓ state-growth-2026-01-22-050718.json
+   ✓ state-growth-2026-01-22-050917.json
+   ✓ state-growth-2026-01-22-050931.json
+   ✓ state-growth-2026-01-22-051029.json
+   ✓ state-growth-2026-01-22-052201.json
+   ✓ state-growth-2026-01-22-052610.json
+   ✓ state-growth-2026-01-22-052739.json
+   ✓ state-growth-2026-01-22-053128.json
+   ✓ transactions-2026-01-19.csv
+   ✓ transactions-2026-01-19.json
+   ✓ transactions-2026-01-20-012356.csv
+   ✓ transactions-2026-01-20-012356.json
+   ✓ transactions-2026-01-20-012622.csv
+   ✓ transactions-2026-01-20-012622.json
+   ✓ transactions-2026-01-22-042758.csv
+   ✓ transactions-2026-01-22-042758.json
+
+📝 Generated reports:
+   ✓ load-test-2026-01-22-050910.json
+   ✓ load-test-2026-01-22-050924.json
+   ✓ load-test-2026-01-22-051022.json
+   ✓ load-test-2026-01-22-052154.json
+   ✓ load-test-2026-01-22-052603.json
+   ✓ load-test-2026-01-22-052732.json
+   ✓ load-test-2026-01-22-053121.json
+   ✓ week1-transfer-benchmark-2026-01-19.json
+   ✓ week1-transfer-benchmark-2026-01-19.md
+   ✓ week1-transfer-benchmark-2026-01-20-012356.json
+   ✓ week1-transfer-benchmark-2026-01-20-012356.md
+   ✓ week1-transfer-benchmark-2026-01-20-012622.json
+   ✓ week1-transfer-benchmark-2026-01-20-012622.md
+   ✓ week1-transfer-benchmark-2026-01-22-042758.json
+   ✓ week1-transfer-benchmark-2026-01-22-042758.md
+   ✓ week2-load-test-2026-01-22-044733.json
+   ✓ week2-load-test-2026-01-22-045151.json
+
+📁 Full path: /home/faldi/plasma-ecc-OK/data/research
+
+╔════════════════════════════════════════════════════╗
+║              NEXT STEPS                           ║
+╚════════════════════════════════════════════════════╝
+
+1. Review results:
+   cat /home/faldi/plasma-ecc-OK/data/research/analysis/*.md
+
+2. Compare Week 1 vs Week 2:
+   # Check TPS, latency, gas differences
+   cat /home/faldi/plasma-ecc-OK/data/research/analysis/week1-*.md
+   cat /home/faldi/plasma-ecc-OK/data/research/analysis/week2-*.md
+
+3. Advanced analysis:
+   # Load JSONs into Python/R for statistical comparison
+   # Create graphs showing throughput/latency trends
+
+4. Next phase:
+   bash testing/run-week3.sh  # (coming soon - stress testing)
+
+✨ Week 2 complete!
+

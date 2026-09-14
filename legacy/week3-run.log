@@ -1,0 +1,225 @@
+🚀 Starting Week 3 Stress Testing Framework
+
+Make sure Anvil is running on port 8545:
+  anvil --port 8545
+
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║           WEEK 3: COMPREHENSIVE STRESS TESTING SUITE                      ║
+║   Plasma UTXO Testing Framework - Extreme Load & Edge Cases               ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+🔍 Checking prerequisites...
+✅ Prerequisites met
+
+✅ Environment loaded from .env
+📁 Data directory: /home/faldi/plasma-ecc-OK/data/research
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 1: PROGRESSIVE LOAD TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing with progressive load escalation:
+  100 TX (baseline) → 250 TX → 500 TX → 1000 TX → 2000 TX (extreme)
+
+(node:62373) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+╔════════════════════════════════════════════════════╗
+║    WEEK 3: PROGRESSIVE STRESS TESTING - START      ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Sender: 0xd3eb51F6c58c6dD024eccfef9afaeB01106039B8
+   Receiver: 0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76
+   Stop on Failure: true
+   Failure Threshold: 25%
+
+
+⏳ PHASE 1: Baseline high volume
+   Transactions: 100
+   Batch Size: 20
+
+   Batch 1/5: FFFFFFFFFFFFFFFFFFFF 57.47 TPS
+
+⚠️  Failure rate 100.00% exceeds threshold 25%
+   Stopping phase execution
+
+   📊 Phase 1 Summary:
+      Total: 20
+      Success: 0 (0.00%)
+      Failed: 20
+      TPS: 0
+      Avg Latency: N/A ms
+
+⚠️  Stopping at Phase 1 due to high failure rate
+
+╔════════════════════════════════════════════════════╗
+║           📊 STRESS TEST COMPLETE                 ║
+╚════════════════════════════════════════════════════╝
+
+📈 Overall Summary:
+   Total Phases: 1
+   Total Transactions: 20
+   Successful: 0
+   Failed: 20
+   Min TPS: 0.00
+   Max TPS: 0.00
+   Avg TPS: 0.00
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-2026-01-29-014005.json
+
+
+✅ Progressive load testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 2: EDGE CASES & ERROR CONDITION TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing error conditions:
+  • Insufficient balance
+  • Invalid addresses
+  • Large values
+  • Rapid nonce increments
+  • Zero value transfers
+  • Self transfers
+
+(node:62421) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+╔════════════════════════════════════════════════════╗
+║       WEEK 3: EDGE CASES & ERROR TESTING           ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Sender: 0xd3eb51F6c58c6dD024eccfef9afaeB01106039B8
+
+🧪 Running edge case tests...
+
+Test 1: Insufficient Balance
+Test 2: Invalid Address
+Test 3: Large Value
+Test 4: Rapid Nonce
+Test 5: Zero Value
+Test 6: Self Transfer
+
+╔════════════════════════════════════════════════════╗
+║              📊 EDGE CASE SUMMARY                 ║
+╚════════════════════════════════════════════════════╝
+
+✅ Passed: 3/6
+❌ Failed: 3/6
+
+✓ insufficient-balance: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✓ invalid-address: failure
+  Error: Address "0xinvalid" is invalid.
+
+- Address must be a hex value of 20 bytes (40 hex characters).
+- Ad
+✓ large-value: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✗ rapid-nonce: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✗ zero-value: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+✗ same-sender-receiver: failure
+  Error: The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the acco
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/edge-cases-2026-01-29-014007.json
+
+
+✅ Edge case testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 3: ECC ACCUMULATOR STRESS TESTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Testing accumulator performance under load:
+  • Update time per transaction
+  • Memory footprint
+  • Consistency verification
+
+(node:62457) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+╔════════════════════════════════════════════════════╗
+║      WEEK 3: ACCUMULATOR STRESS TESTING            ║
+╚════════════════════════════════════════════════════╝
+
+🔍 Configuration:
+   L2 RPC: http://localhost:8545
+   Test TX Count: 500
+   Snapshot Interval: 50
+   Sender: 0xd3eb51F6c58c6dD024eccfef9afaeB01106039B8
+   Receiver: 0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76
+
+🚀 Executing transactions and monitoring accumulator...
+
+   10/500..   20/500..   30/500..   40/500..   50/500..   60/500..   70/500..   80/500..   90/500..   100/500..   110/500..   120/500..   130/500..   140/500..   150/500..   160/500..   170/500..   180/500..   190/500..   200/500..   210/500..   220/500..   230/500..   240/500..   250/500..   260/500..   270/500..   280/500..   290/500..   300/500..   310/500..   320/500..   330/500..   340/500..   350/500..   360/500..   370/500..   380/500..   390/500..   400/500..   410/500..   420/500..   430/500..   440/500..   450/500..   460/500..   470/500..   480/500..   490/500..   500/500..
+
+╔════════════════════════════════════════════════════╗
+║         📊 ACCUMULATOR STRESS SUMMARY             ║
+╚════════════════════════════════════════════════════╝
+
+📈 Transaction Statistics:
+   Total TX: 500
+   Successful: 0
+   Failed: 500
+   Success Rate: 0.00%
+
+⏱️  Accumulator Performance:
+   Avg Update Time: 0.00 ms
+   Max Update Time: 0.00 ms
+   Min Update Time: 0.00 ms
+
+💾 Memory Analysis:
+   Snapshots Taken: 0
+   Avg Memory Growth: 0.00 bytes per interval
+
+✅ Consistency Checks:
+   Checks Performed: 0
+   Failures: 0
+
+📁 Results saved: /home/faldi/plasma-ecc-OK/data/research/benchmarks/accumulator-stress-2026-01-29-014014.json
+
+
+✅ Accumulator stress testing complete
+
+═══════════════════════════════════════════════════════════════════════════════
+RESULTS SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+📊 Generated benchmark files:
+   Stress test files: 6
+   Edge case files: 3
+   Accumulator test files: 3
+
+📁 Full path: /home/faldi/plasma-ecc-OK/data/research
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                        NEXT STEPS                                         ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+1. Review stress test results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-*.json | jq '.summary'
+
+2. View edge case results:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/edge-cases-*.json | jq '.results'
+
+3. Analyze accumulator performance:
+   cat /home/faldi/plasma-ecc-OK/data/research/benchmarks/accumulator-stress-*.json | jq '.statistics'
+
+4. Compare all three weeks:
+   # Week 1 baseline TPS
+   jq '.performanceMetrics.tps' /home/faldi/plasma-ecc-OK/data/research/analysis/week1-transfer-benchmark-*.json
+   # Week 2 load test TPS
+   jq '.metrics.tps' /home/faldi/plasma-ecc-OK/data/research/analysis/load-test-*.json
+   # Week 3 progressive test (max TPS)
+   jq '.summary.maxTps' /home/faldi/plasma-ecc-OK/data/research/benchmarks/stress-test-summary-*.json
+
+5. For Python/R analysis:
+   cp /home/faldi/plasma-ecc-OK/data/research/benchmarks/*.json /path/to/analysis/tools/
+
+✨ Week 3 stress testing complete!
+

@@ -1,0 +1,245 @@
+╔════════════════════════════════════════════════════════════════╗
+║              WEEK 2: QUICK START GUIDE                        ║
+╚════════════════════════════════════════════════════════════════╝
+
+WHAT IS WEEK 2?
+═══════════════════════════════════════════════════════════════
+Week 2 extends Week 1 baseline testing with:
+  • LOAD TESTING: Multiple concurrent accounts, stress scenarios
+  • STATE ANALYSIS: UTXO growth, accumulator compression efficiency
+
+PURPOSE FOR DISSERTATION:
+  • Show real-world throughput under concurrent load
+  • Demonstrate state compression benefits
+  • Identify network bottlenecks and capacity limits
+
+
+PREREQUISITES
+═══════════════════════════════════════════════════════════════
+□ Anvil running:              npx anvil
+□ Contracts deployed:         bash testing/run-week1.sh (first time)
+□ .env configured with:       L2_RPC_URL, L2_OPERATOR_PRIVATE_KEY, PLASMA_CHAIN_UTXO_ADDRESS
+
+
+RUN WEEK 2
+═══════════════════════════════════════════════════════════════
+
+SIMPLEST:
+  bash testing/run-week2.sh
+
+WITH CUSTOM LOAD:
+  TEST_LOAD_ACCOUNTS=10 \
+  TEST_LOAD_TX_PER_ACCOUNT=20 \
+  TEST_CONCURRENCY=5 \
+  bash testing/run-week2.sh
+
+WITH STATE ANALYSIS OVER LARGE RANGE:
+  STATE_ANALYSIS_START_BLOCK=0 \
+  STATE_ANALYSIS_END_BLOCK=50000 \
+  STATE_ANALYSIS_INTERVAL=100 \
+  bash testing/run-week2.sh
+
+
+WHAT HAPPENS
+═══════════════════════════════════════════════════════════════
+
+Phase 1: Load Testing (~30-60 seconds)
+  1. Create 5 test accounts
+  2. Fund them from operator account
+  3. Execute 10 transfers per account (50 total)
+  4. Measure: TPS, latency, success rate, gas
+  
+  Output: load-test-YYYY-MM-DD-HHmmss.json
+
+Phase 2: State Analysis (~30-120 seconds, depends on block range)
+  1. Sample blockchain state at intervals
+  2. Track UTXO set size and accumulator
+  3. Calculate compression ratio
+  4. Analyze state growth patterns
+  
+  Output: state-growth-YYYY-MM-DD-HHmmss.json
+
+
+VIEW RESULTS
+═══════════════════════════════════════════════════════════════
+
+View markdown reports:
+  cat data/research/analysis/week2-*.md
+
+Check specific metrics:
+  cat data/research/analysis/load-test-*.md | grep "TPS"
+  cat data/research/analysis/state-growth-*.md | grep "Compression"
+
+View raw JSON:
+  cat data/research/benchmarks/load-test-*.json | jq
+  cat data/research/benchmarks/state-growth-*.json | jq
+
+
+EXPECTED OUTPUT
+═══════════════════════════════════════════════════════════════
+
+Load Test Summary:
+  ✓ 5 accounts created
+  ✓ 50 transactions completed
+  ✓ Average TPS: 10-15 (depending on load)
+  ✓ Average latency: 20-50ms
+  ✓ Success rate: 100%
+
+State Analysis Summary:
+  ✓ Snapshots collected
+  ✓ UTXO count tracked
+  ✓ Accumulator size: 256 bytes (constant)
+  ✓ Compression ratio: 1.0x (efficiency metric)
+
+
+COMPARING WITH WEEK 1
+═══════════════════════════════════════════════════════════════
+
+Week 1 (Baseline):
+  • 1 account, sequential transfers
+  • TPS: ~8-9 tx/s
+  • Latency: ~30-40ms avg
+  • Purpose: Establish baseline
+
+Week 2 (Load Testing):
+  • 5+ accounts, concurrent transfers
+  • TPS: ~10-15 tx/s (may decrease due to contention)
+  • Latency: 20-150ms (wider distribution)
+  • Purpose: Find network limits and bottlenecks
+
+
+FILE LOCATIONS
+═══════════════════════════════════════════════════════════════
+
+Raw Data:
+  data/research/benchmarks/
+  ├─ load-test-YYYY-MM-DD-HHmmss.json
+  └─ state-growth-YYYY-MM-DD-HHmmss.json
+
+Reports:
+  data/research/analysis/
+  ├─ load-test-summary-YYYY-MM-DD-HHmmss.md
+  └─ state-analysis-summary-YYYY-MM-DD-HHmmss.md
+
+Scripts:
+  testing/scripts/
+  ├─ week2-load-test.ts
+  └─ week2-state-analysis.ts
+
+Orchestration:
+  testing/run-week2.sh
+
+
+KEY METRICS COLLECTED
+═══════════════════════════════════════════════════════════════
+
+Load Testing:
+  • TPS (average & peak)
+  • Latency (min/max/average)
+  • Success rate
+  • Failure tracking
+  • Gas per transaction
+
+State Analysis:
+  • UTXO count progression
+  • Accumulator size
+  • State growth rate
+  • Compression efficiency
+  • Block coverage
+
+
+CONFIGURATION PARAMETERS
+═══════════════════════════════════════════════════════════════
+
+Load Test:
+  TEST_LOAD_ACCOUNTS           → Default: 5 (test accounts)
+  TEST_LOAD_TX_PER_ACCOUNT     → Default: 10 (transfers per account)
+  TEST_CONCURRENCY             → Default: 3 (parallel transfers)
+  TEST_TRANSFER_AMOUNT         → Default: 100 wei
+
+State Analysis:
+  STATE_ANALYSIS_START_BLOCK   → Default: 0
+  STATE_ANALYSIS_END_BLOCK     → Default: 9999
+  STATE_ANALYSIS_INTERVAL      → Default: 100 blocks
+
+
+TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════
+
+❌ "Anvil not running"
+   Solution: Start Anvil: npx anvil
+
+❌ "Missing env var: L2_OPERATOR_PRIVATE_KEY"
+   Solution: Check .env has all required variables
+
+❌ "Load test shows 0% success"
+   Solution: 
+     1. Verify contracts deployed (run Week 1 first)
+     2. Check operator has funds
+     3. Verify PLASMA_CHAIN_UTXO_ADDRESS is correct
+
+❌ "State analysis shows all zeros"
+   Solution: Storage layout may differ from expectations
+     - Check: cast storage $PLASMA_CHAIN_UTXO_ADDRESS
+
+
+FOR DISSERTATION
+═══════════════════════════════════════════════════════════════
+
+Use Week 2 data to demonstrate:
+  ✓ Network scalability under load
+  ✓ Concurrency effectiveness
+  ✓ State compression benefits
+  ✓ Real-world capacity limits
+  ✓ Performance characteristics
+
+Include in paper:
+  • TPS comparison (Week 1 vs Week 2)
+  • Latency distribution graphs
+  • State growth charts
+  • Compression ratio analysis
+  • Bottleneck identification
+
+
+NEXT STEPS
+═══════════════════════════════════════════════════════════════
+
+1. Run Week 2:
+   bash testing/run-week2.sh
+
+2. Review results:
+   cat data/research/analysis/*.md
+
+3. Analyze data:
+   - Open JSONs in Python/Excel
+   - Create graphs for dissertation
+   - Compare against Week 1 baseline
+
+4. Optional: Week 3 (Planned)
+   - Extreme stress testing
+   - Edge case scenarios
+   - Hard limit identification
+
+
+DOCUMENTATION
+═══════════════════════════════════════════════════════════════
+
+Detailed guides:
+  • WEEK2-TESTING-GUIDE.md     → Full Week 2 documentation
+  • WEEK2-SETUP-SUMMARY.md     → Implementation details
+
+Framework overview:
+  • TESTING-FRAMEWORK-PROGRESS.md → Framework status
+
+Quick references:
+  • TESTING-GUIDE.md           → Quick start
+  • DATA-LOCATION.md           → Data directory info
+
+
+═══════════════════════════════════════════════════════════════
+
+Ready to test? Run: bash testing/run-week2.sh
+
+Questions? See: WEEK2-TESTING-GUIDE.md
+
+═══════════════════════════════════════════════════════════════
