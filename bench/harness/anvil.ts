@@ -18,6 +18,16 @@ export function loadAnvilConfig(): AnvilConfig {
   return { rpcUrl, chainId: 31337 };
 }
 
+// viem's default pollingInterval (4_000ms, meant for real chains with real
+// block times) was silently inflating every waitForTransactionReceipt() on
+// Anvil -- which mines instantly -- to a flat ~4s regardless of the actual
+// receipt already being available (pre-freeze harness fix, CACAT 4). The
+// timeout is also raised well past viem's 60s default: a heavy cell's
+// eth_estimateGas (e.g. sys.plasma_eccmath at large n) can legitimately
+// take longer than that to simulate against a 300M-gas block (CACAT 3).
+const ANVIL_POLLING_INTERVAL_MS = 50;
+const ANVIL_RPC_TIMEOUT_MS = 180_000;
+
 export function makeClients(cfg: AnvilConfig, operatorPrivateKey: Hex) {
   const chain = {
     id: cfg.chainId,
@@ -26,12 +36,16 @@ export function makeClients(cfg: AnvilConfig, operatorPrivateKey: Hex) {
     rpcUrls: { default: { http: [cfg.rpcUrl] }, public: { http: [cfg.rpcUrl] } },
   } as const;
 
-  const publicClient = createPublicClient({ chain, transport: http(cfg.rpcUrl, { timeout: 60_000 }) });
+  const publicClient = createPublicClient({
+    chain,
+    transport: http(cfg.rpcUrl, { timeout: ANVIL_RPC_TIMEOUT_MS }),
+    pollingInterval: ANVIL_POLLING_INTERVAL_MS,
+  });
   const operatorAccount = privateKeyToAccount(operatorPrivateKey);
   const operatorWalletClient = createWalletClient({
     account: operatorAccount,
     chain,
-    transport: http(cfg.rpcUrl, { timeout: 60_000 }),
+    transport: http(cfg.rpcUrl, { timeout: ANVIL_RPC_TIMEOUT_MS }),
   });
 
   return { chain, publicClient, operatorAccount, operatorWalletClient };

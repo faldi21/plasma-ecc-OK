@@ -4,7 +4,7 @@
  * omitted). env_hash covers tool versions and config so a later reader
  * can tell whether two runs are truly comparable.
  */
-import { existsSync, mkdirSync, openSync, closeSync, statSync, writeSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, statSync, writeSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -50,12 +50,27 @@ export interface BenchRecord {
   ops_failed: number | null;
   ops_retried: number | null;
   latency_ms: number[] | null;
-  status: "ok" | "error" | "exceeds_block_gas_limit" | "pass" | "fail";
+  status: "ok" | "error" | "exceeds_block_gas_limit" | "timeout" | "pass" | "fail";
   notes: string | null;
   env_hash: string;
   setup_tx_count?: number | null;
   test_name?: string | null;
   assert_result?: "pass" | "fail" | null;
+  /**
+   * The node's own configured block gas limit (Anvil's --gas-limit, e.g.
+   * 300_000_000 -- roughly 10x mainnet's, deliberately raised so the gas
+   * curve can still be MEASURED past the real limit). Never used to decide
+   * mainnet feasibility -- see exceeds_mainnet_block_limit for that
+   * (pre-freeze harness fix, CACAT 2: the two were conflated before).
+   */
+  block_gas_limit?: number | null;
+  /**
+   * gas_used > 36_000_000 (a real Ethereum mainnet block's approximate gas
+   * limit), computed from the measured receipt, independent of whatever
+   * gas_limit Anvil was configured with. This is the field any "does this
+   * fit in a real block" claim must cite.
+   */
+  exceeds_mainnet_block_limit?: boolean | null;
 }
 
 function sh(cmd: string): string | null {
@@ -106,15 +121,39 @@ export function computeEnvHash(repoRoot: string): string {
  * single exclusive-create syscall ('ax'), not a separate existsSync() then
  * write, so two processes racing to create the same new file can't both
  * succeed -- one gets EEXIST atomically, not a torn/overwritten file.
+ *
+ * Also enforces L2 tx_hash uniqueness across the whole RUN_ID (pre-freeze
+ * harness fix, CACAT 1): under snapshot/revert isolation, two genuinely
+ * different, independently-executed transactions can end up byte-identical
+ * once signed (same nonce, same calldata, same fee) and therefore hash the
+ * same -- that is a real provenance hazard, not something to allow
+ * quietly. The seen-hash set is seeded from every sibling *.jsonl already
+ * in this RUN_ID's directory at construction time (one RUN_ID holds
+ * e1..e4 together), then grows as this writer's own write() calls happen.
  */
 export class RecordWriter {
   private readonly filePath: string;
   private readonly fd: number;
+  private readonly seenL2TxHashes = new Set<string>();
 
   constructor(dataRoot: string, runId: string, filename: string) {
     const dir = path.join(dataRoot, "raw", runId);
     mkdirSync(dir, { recursive: true });
     this.filePath = path.join(dir, filename);
+
+    for (const sibling of readdirSync(dir)) {
+      if (!sibling.endsWith(".jsonl")) continue;
+      for (const line of readFileSync(path.join(dir, sibling), "utf8").split("\n")) {
+        if (!line) continue;
+        let rec: Partial<BenchRecord>;
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          continue; // tolerate a torn last line from a crashed prior process
+        }
+        if (rec.layer === "L2" && rec.tx_hash) this.seenL2TxHashes.add(rec.tx_hash);
+      }
+    }
 
     try {
       this.fd = openSync(this.filePath, "ax");
@@ -134,6 +173,18 @@ export class RecordWriter {
   }
 
   write(record: BenchRecord): void {
+    if (record.layer === "L2" && record.tx_hash) {
+      if (this.seenL2TxHashes.has(record.tx_hash)) {
+        console.error(
+          `FATAL: tx_hash ${record.tx_hash} sudah dipakai record L2 lain dalam RUN_ID ini ` +
+            `(cell_id=${record.cell_id}, repetition=${record.repetition}). Kalau ini memang satu ` +
+            `transaksi dengan beberapa pengukuran yang sah, itu butuh mekanisme eksplisit -- bukan ` +
+            `diizinkan diam-diam di sini.`
+        );
+        process.exit(1);
+      }
+      this.seenL2TxHashes.add(record.tx_hash);
+    }
     writeSync(this.fd, JSON.stringify(record) + "\n", null, "utf8");
   }
 

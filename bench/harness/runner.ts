@@ -45,11 +45,15 @@ export interface CellResult {
   ops_failed?: number;
   ops_retried?: number;
   latency_ms?: number[];
-  status: "ok" | "error" | "exceeds_block_gas_limit" | "pass" | "fail";
+  status: "ok" | "error" | "exceeds_block_gas_limit" | "timeout" | "pass" | "fail";
   notes?: string;
   setup_tx_count?: number;
   test_name?: string;
   assert_result?: "pass" | "fail";
+  /** The node's own configured block gas limit -- see BenchRecord's docblock (record.ts). */
+  block_gas_limit?: number;
+  /** gas_used > 36_000_000 -- see BenchRecord's docblock (record.ts). */
+  exceeds_mainnet_block_limit?: boolean;
 }
 
 export interface Cell {
@@ -139,6 +143,8 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
           setup_tx_count: result.setup_tx_count ?? null,
           test_name: result.test_name ?? null,
           assert_result: result.assert_result ?? null,
+          block_gas_limit: result.block_gas_limit ?? null,
+          exceeds_mainnet_block_limit: result.exceeds_mainnet_block_limit ?? null,
         };
         writer.write(record);
       } finally {

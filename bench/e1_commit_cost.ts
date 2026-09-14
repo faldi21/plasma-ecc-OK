@@ -49,6 +49,8 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  TimeoutError,
+  WaitForTransactionReceiptTimeoutError,
   type Address,
   type Hex,
 } from "viem";
@@ -100,7 +102,8 @@ const L1_LOCAL_RPC_URL = process.env.L1_LOCAL_RPC_URL || "http://127.0.0.1:8547"
 
 // ---------------------------------------------------------------- Constants
 
-const BLOCK_GAS_LIMIT = 300_000_000n;
+const BLOCK_GAS_LIMIT = 300_000_000n; // Anvil's configured --gas-limit (matches .env.paper1's ANVIL_GAS_LIMIT): decides only whether THIS harness can send the tx at all.
+const MAINNET_BLOCK_GAS_LIMIT = 36_000_000n; // real Ethereum's approximate block gas limit -- the only number a "doesn't fit in a block" claim may cite (CACAT 2, pre-freeze harness fix).
 const SETUP_CHUNK_SIZE = 100;
 const L1_TX_GAS_LIMIT = 300_000n;
 const L1_ANCHOR_N = 100;
@@ -189,6 +192,158 @@ function sortedElementIds(ids: readonly Hex[]): Hex[] {
   return [...ids].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
 }
 
+// ---------------------------------------------------------------- shared: measured createBlock() send
+
+/**
+ * Bumped by 1 on every measured createBlock() send and folded into that
+ * tx's maxPriorityFeePerGas so the signed transaction can never collide
+ * with another cell's (pre-freeze harness fix, CACAT 1). Under this
+ * harness's snapshot/revert isolation plus warm-up runs, two DIFFERENT
+ * cells can otherwise reach their commit tx at the identical nonce with
+ * identical calldata (createBlock() takes no arguments for six of the
+ * seven variants) -- same nonce + same to-address (CREATE address depends
+ * only on sender+nonce, not bytecode) + same calldata + same fee = a
+ * byte-identical signed transaction, hence an identical hash, even though
+ * each cell executes independently against its own freshly-deployed
+ * contract and its gas_used is correctly its own. Confirmed against the E1
+ * run that surfaced this: data/raw/20260914-225925-b62f671/
+ * e1_commit_cost.jsonl. The salt only changes the fee/signature, never
+ * gas_used (priority fee doesn't affect execution cost).
+ */
+let txFeeSalt = 0n;
+
+/**
+ * Sends the measured createBlock() call for one cell and classifies the
+ * outcome (pre-freeze harness fix, CACAT 2/3):
+ *  - a genuine node refusal (gas > BLOCK_GAS_LIMIT, from either
+ *    eth_estimateGas or the send itself) -> "exceeds_block_gas_limit",
+ *    decided ONLY against Anvil's own configured limit (BLOCK_GAS_LIMIT),
+ *    never against MAINNET_BLOCK_GAS_LIMIT.
+ *  - an RPC timeout (no answer within the transport's timeout, from either
+ *    eth_estimateGas or waitForTransactionReceipt) -> "timeout", never
+ *    reported as the former and never inferred from it. If
+ *    eth_estimateGas itself times out, this still attempts the real send
+ *    with an explicit gas limit rather than giving up -- a timeout is not
+ *    evidence the gas is too high.
+ *  - success -> "ok"/"error" per the receipt, with block_gas_limit and
+ *    exceeds_mainnet_block_limit (gas_used > 36,000,000) recorded
+ *    alongside gas_used, decoupled from BLOCK_GAS_LIMIT entirely.
+ */
+async function sendMeasuredCreateBlock(
+  ctx: CellContext,
+  cellLabel: string,
+  address: Address,
+  abi: any,
+  args: readonly unknown[],
+  setupTxCount: number,
+  n: number
+): Promise<CellResult> {
+  let estimatedGas: bigint | null = null;
+  try {
+    estimatedGas = await ctx.publicClient.estimateContractGas({
+      address,
+      abi,
+      functionName: "createBlock",
+      args,
+      account: ctx.walletClient.account!,
+    });
+  } catch (err) {
+    if (!(err instanceof TimeoutError)) {
+      return {
+        status: "exceeds_block_gas_limit",
+        n_elements: n,
+        function: "createBlock",
+        setup_tx_count: setupTxCount,
+        block_gas_limit: Number(BLOCK_GAS_LIMIT),
+        notes: `${cellLabel}: eth_estimateGas itself refused (exceeds configured block gas limit ${BLOCK_GAS_LIMIT}); no transaction was sent. Raw: ${String(
+          (err as Error).message
+        ).slice(0, 200)}`,
+        duration_ms: 0,
+      };
+    }
+    // eth_estimateGas timed out -- not evidence either way of whether it
+    // exceeds the block gas limit. Fall through and try the real send.
+  }
+
+  if (estimatedGas !== null && estimatedGas > BLOCK_GAS_LIMIT) {
+    return {
+      status: "exceeds_block_gas_limit",
+      n_elements: n,
+      function: "createBlock",
+      setup_tx_count: setupTxCount,
+      block_gas_limit: Number(BLOCK_GAS_LIMIT),
+      notes: `${cellLabel}: estimated gas ${estimatedGas} > block gas limit ${BLOCK_GAS_LIMIT}; no transaction was sent.`,
+      duration_ms: 0,
+    };
+  }
+
+  txFeeSalt += 1n;
+  const t0 = process.hrtime.bigint();
+  let commitHash: Hex;
+  try {
+    commitHash = await ctx.walletClient.writeContract({
+      address,
+      abi,
+      functionName: "createBlock",
+      args,
+      account: ctx.walletClient.account!,
+      chain: ctx.walletClient.chain,
+      gas: BLOCK_GAS_LIMIT,
+      maxPriorityFeePerGas: 1_000_000_000n + txFeeSalt,
+    });
+  } catch (err) {
+    return {
+      status: "exceeds_block_gas_limit",
+      n_elements: n,
+      function: "createBlock",
+      setup_tx_count: setupTxCount,
+      block_gas_limit: Number(BLOCK_GAS_LIMIT),
+      notes: `${cellLabel}: node refused the transaction itself (exceeds block gas limit ${BLOCK_GAS_LIMIT})${
+        estimatedGas === null ? " after eth_estimateGas timed out" : ""
+      }. Raw: ${String((err as Error).message).slice(0, 200)}`,
+      duration_ms: 0,
+    };
+  }
+
+  let commitReceipt: Awaited<ReturnType<typeof ctx.publicClient.waitForTransactionReceipt>>;
+  try {
+    commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
+  } catch (err) {
+    if (err instanceof TimeoutError || err instanceof WaitForTransactionReceiptTimeoutError) {
+      return {
+        status: "timeout",
+        n_elements: n,
+        function: "createBlock",
+        setup_tx_count: setupTxCount,
+        tx_hash: commitHash,
+        block_gas_limit: Number(BLOCK_GAS_LIMIT),
+        notes: `${cellLabel}: waitForTransactionReceipt did not answer in time for tx ${commitHash}. Raw: ${String(
+          (err as Error).message
+        ).slice(0, 200)}`,
+        duration_ms: 0,
+      };
+    }
+    throw err;
+  }
+  const t1 = process.hrtime.bigint();
+  const gasUsed = Number(commitReceipt.gasUsed);
+
+  return {
+    duration_ms: formatDurationMs(t0, t1),
+    function: "createBlock",
+    n_elements: n,
+    gas_used: gasUsed,
+    gas_limit: Number(BLOCK_GAS_LIMIT),
+    block_gas_limit: Number(BLOCK_GAS_LIMIT),
+    exceeds_mainnet_block_limit: gasUsed > Number(MAINNET_BLOCK_GAS_LIMIT),
+    tx_count: 1,
+    tx_hash: commitHash,
+    block_number: Number(commitReceipt.blockNumber),
+    setup_tx_count: setupTxCount,
+    status: commitReceipt.status === "success" ? "ok" : "error",
+  };
+}
+
 // ---------------------------------------------------------------- bench.commit_* cells
 
 /** Deploys the given commit-variant contract, funds it via addPendingBatch
@@ -241,64 +396,15 @@ async function benchCommitCell(ctx: CellContext, variantId: string, contractName
   }
   const createBlockArgs = isEcrecover ? [claimedPoint!.x, claimedPoint!.y] : [];
 
-  let estimatedGas: bigint;
-  try {
-    estimatedGas = await ctx.publicClient.estimateContractGas({
-      address,
-      abi,
-      functionName: "createBlock",
-      args: createBlockArgs,
-      account: ctx.walletClient.account!,
-    });
-  } catch (err) {
-    return {
-      status: "exceeds_block_gas_limit",
-      n_elements: n,
-      function: "createBlock",
-      setup_tx_count: setupTxCount,
-      notes: `cell=bench.commit_${variantId} n=${n}: eth_estimateGas itself refused (exceeds configured block gas limit ${BLOCK_GAS_LIMIT}); no transaction was sent. Raw: ${String(
-        (err as Error).message
-      ).slice(0, 200)}`,
-      duration_ms: 0,
-    };
-  }
-
-  if (estimatedGas > BLOCK_GAS_LIMIT) {
-    return {
-      status: "exceeds_block_gas_limit",
-      n_elements: n,
-      function: "createBlock",
-      setup_tx_count: setupTxCount,
-      notes: `cell=bench.commit_${variantId} n=${n}: estimated gas ${estimatedGas} > block gas limit ${BLOCK_GAS_LIMIT}; no transaction was sent.`,
-      duration_ms: 0,
-    };
-  }
-
-  const t0 = process.hrtime.bigint();
-  const commitHash = await ctx.walletClient.writeContract({
+  return sendMeasuredCreateBlock(
+    ctx,
+    `cell=bench.commit_${variantId} n=${n}`,
     address,
     abi,
-    functionName: "createBlock",
-    args: createBlockArgs,
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
-    gas: BLOCK_GAS_LIMIT,
-  });
-  const commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
-  const t1 = process.hrtime.bigint();
-
-  return {
-    duration_ms: formatDurationMs(t0, t1),
-    function: "createBlock",
-    n_elements: n,
-    gas_used: Number(commitReceipt.gasUsed),
-    gas_limit: Number(BLOCK_GAS_LIMIT),
-    tx_count: 1,
-    tx_hash: commitHash,
-    block_number: Number(commitReceipt.blockNumber),
-    setup_tx_count: setupTxCount,
-    status: commitReceipt.status === "success" ? "ok" : "error",
-  };
+    createBlockArgs,
+    setupTxCount,
+    n
+  );
 }
 
 // ---------------------------------------------------------------- sys.plasma_* cells
@@ -349,62 +455,7 @@ async function sysCommitCell(ctx: CellContext, variant: "v0" | "eccmath", n: num
     setupTxCount++;
   }
 
-  let estimatedGas: bigint;
-  try {
-    estimatedGas = await ctx.publicClient.estimateContractGas({
-      address,
-      abi,
-      functionName: "createBlock",
-      account: ctx.walletClient.account!,
-    });
-  } catch (err) {
-    return {
-      status: "exceeds_block_gas_limit",
-      n_elements: n,
-      function: "createBlock",
-      setup_tx_count: setupTxCount,
-      notes: `cell=sys.plasma_${variant} n=${n}: eth_estimateGas itself refused (exceeds configured block gas limit ${BLOCK_GAS_LIMIT}); no transaction was sent. Raw: ${String(
-        (err as Error).message
-      ).slice(0, 200)}`,
-      duration_ms: 0,
-    };
-  }
-
-  if (estimatedGas > BLOCK_GAS_LIMIT) {
-    return {
-      status: "exceeds_block_gas_limit",
-      n_elements: n,
-      function: "createBlock",
-      setup_tx_count: setupTxCount,
-      notes: `cell=sys.plasma_${variant} n=${n}: estimated gas ${estimatedGas} > block gas limit ${BLOCK_GAS_LIMIT}; no transaction was sent.`,
-      duration_ms: 0,
-    };
-  }
-
-  const t0 = process.hrtime.bigint();
-  const commitHash = await ctx.walletClient.writeContract({
-    address,
-    abi,
-    functionName: "createBlock",
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
-    gas: BLOCK_GAS_LIMIT,
-  });
-  const commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
-  const t1 = process.hrtime.bigint();
-
-  return {
-    duration_ms: formatDurationMs(t0, t1),
-    function: "createBlock",
-    n_elements: n,
-    gas_used: Number(commitReceipt.gasUsed),
-    gas_limit: Number(BLOCK_GAS_LIMIT),
-    tx_count: 1,
-    tx_hash: commitHash,
-    block_number: Number(commitReceipt.blockNumber),
-    setup_tx_count: setupTxCount,
-    status: commitReceipt.status === "success" ? "ok" : "error",
-  };
+  return sendMeasuredCreateBlock(ctx, `cell=sys.plasma_${variant} n=${n}`, address, abi, [], setupTxCount, n);
 }
 
 // ---------------------------------------------------------------- L1 anchoring (n=100 only)
