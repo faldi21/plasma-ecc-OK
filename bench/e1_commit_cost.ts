@@ -22,12 +22,22 @@
  * raised to force a cell through.
  *
  * L1 anchoring (n=100 only, via RootChainBench.sol on Sepolia) is
- * entirely skipped under --dry-run. Its repetition count is configured
- * separately from L2's (--l1-repetitions, default 5), per §4.3's
- * "N_L1 = 5 while L2 uses N >= 30" allowance.
+ * entirely skipped under plain --dry-run. Its repetition count is
+ * configured separately from L2's (--l1-repetitions, default 5), per
+ * §4.3's "N_L1 = 5 while L2 uses N >= 30" allowance.
+ *
+ * --l1-local runs the L1 anchoring path for real, but against a SECOND
+ * local Anvil instance (a different port, e.g. `anvil --port 8547
+ * --chain-id 31338`, started separately -- this script never starts one
+ * for you) instead of Sepolia; see makeL1Clients(). Use it to prove the
+ * L1 code path itself is intact (deploy, submitBlockPoint/Root, receipt
+ * saved, calldata zero/nonzero counted, tx_hash recorded) without
+ * spending real Sepolia ETH. It overrides --dry-run's "skip L1" behavior
+ * when both are passed together.
  *
  * Usage:
  *   npx tsx bench/e1_commit_cost.ts --dry-run --repetitions 1
+ *   npx tsx bench/e1_commit_cost.ts --dry-run --l1-local --l1-repetitions 1
  *   npx tsx bench/e1_commit_cost.ts --repetitions 30 --l1-repetitions 5
  */
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -70,6 +80,22 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const REPETITIONS = parseInt(parseArg("--repetitions", DRY_RUN ? "1" : "30"), 10);
 const L1_REPETITIONS = parseInt(parseArg("--l1-repetitions", "5"), 10);
 const BASE_SEED = parseInt(parseArg("--seed", "14757395"), 10); // 0xE1E1E1
+
+/**
+ * Runs the L1 anchoring path (deploy RootChainBench, submitBlockPoint/
+ * submitBlockRoot, receipt + calldata recording) against a SECOND, separate
+ * local Anvil instance instead of Sepolia -- a way to exercise and prove
+ * out the entire L1 code path (nothing skipped, nothing stubbed) without
+ * spending real Sepolia ETH or waiting on real block times. This is
+ * different from --dry-run, which skips the L1 path entirely: --l1-local
+ * RUNS it, just against localhost instead of Sepolia, and overrides
+ * --dry-run's "skip L1" behavior when both are passed (there would be
+ * nothing left to prove otherwise). Point L1_LOCAL_RPC_URL at a second
+ * `anvil --port <other>` you've started yourself; this script never starts
+ * one for you and never touches Sepolia when this flag is set.
+ */
+const L1_LOCAL = process.argv.includes("--l1-local");
+const L1_LOCAL_RPC_URL = process.env.L1_LOCAL_RPC_URL || "http://127.0.0.1:8547";
 
 // ---------------------------------------------------------------- Constants
 
@@ -136,18 +162,29 @@ function calldataByteStats(dataHex: Hex): { total: number; zero: number; nonzero
 }
 
 /**
- * CommitKeccak.sol requires ids to be submitted in strictly increasing
- * order (its docblock: canonical digest regardless of off-chain collection
- * order); deriveElementIds' keccak256-derived ids are not naturally sorted,
- * so createBlock() would revert on out-of-order input. Sorting ascending
- * before submission fixes that without changing gas cost -- the contract's
- * per-element work (compare, hash, store) is identical regardless of which
- * order a fixed set of ids arrives in. The other six variants are all
- * order-independent (commutative addmod or commutative Merkle hashing --
- * see each contract's docblock), so this is scoped to keccak only.
+ * Sorts element ids ascending, off-chain, before ANY cell (bench.commit_*
+ * or sys.*) submits them. Two independent reasons this applies to every
+ * variant, not just CommitKeccak:
+ *
+ *   1. CommitKeccak.sol requires ids to be submitted in strictly increasing
+ *      order (its docblock: canonical digest regardless of off-chain
+ *      collection order) -- deriveElementIds' keccak256-derived ids are
+ *      not naturally sorted, so createBlock() would revert without this.
+ *   2. Fairness across ALL cells (docs/EXPERIMENT_PRD.md line 207's own
+ *      policy, extended here from storage warm/cold status to input
+ *      order): every cell -- bench.commit_* and sys.* alike -- must
+ *      process the exact same multiset in the exact same order, so no
+ *      variant's gas number is an artifact of a particular random
+ *      ordering rather than the digest primitive itself.
+ *
+ * This sort happens entirely off-chain (a plain JS array .sort() before
+ * any transaction is built) and is NOT part of the measured window or gas
+ * cost -- the six order-independent variants (commutative addmod or
+ * commutative Merkle hashing; see each contract's docblock) would cost
+ * the same regardless of order, so this only changes what CommitKeccak
+ * sees, never what gets measured.
  */
-function idsForVariant(variantId: string, ids: readonly Hex[]): Hex[] {
-  if (variantId !== "keccak") return [...ids];
+function sortedElementIds(ids: readonly Hex[]): Hex[] {
   return [...ids].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
 }
 
@@ -169,7 +206,7 @@ async function benchCommitCell(ctx: CellContext, variantId: string, contractName
   const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
   const address = deployReceipt.contractAddress as Address;
 
-  const ids = idsForVariant(variantId, deriveElementIds(ctx.seed, n));
+  const ids = sortedElementIds(deriveElementIds(ctx.seed, n));
   const idChunks = chunk(ids, SETUP_CHUNK_SIZE);
   let setupTxCount = 0;
   for (const idsChunk of idChunks) {
@@ -285,7 +322,7 @@ async function sysCommitCell(ctx: CellContext, variant: "v0" | "eccmath", n: num
   const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
   const address = deployReceipt.contractAddress as Address;
 
-  const ids = deriveElementIds(ctx.seed, n);
+  const ids = sortedElementIds(deriveElementIds(ctx.seed, n));
   const users = ids.map((_, i) => `0x${(0x1000 + i).toString(16).padStart(40, "0")}` as Address);
   const amounts = ids.map(() => 1_000_000_000_000_000_000n);
   const token = "0x000000000000000000000000000000000000dEaD" as Address;
@@ -403,6 +440,36 @@ function makeSepoliaClients(rpcUrl: string, pk: Hex) {
   return { publicClient, walletClient, account };
 }
 
+const L1_LOCAL_CHAIN = {
+  id: 31338,
+  name: "L1 Local Bench",
+  nativeCurrency: { decimals: 18, name: "Ether", symbol: "ETH" },
+  rpcUrls: { default: { http: [L1_LOCAL_RPC_URL] }, public: { http: [L1_LOCAL_RPC_URL] } },
+} as const;
+
+/**
+ * Picks the L1 target: a second local Anvil (--l1-local) or real Sepolia
+ * (default). Returns a `chain` alongside the clients so callers don't need
+ * a separate `sepolia`-vs-`L1_LOCAL_CHAIN` branch at every writeContract
+ * call site.
+ */
+function makeL1Clients(): {
+  publicClient: ReturnType<typeof createPublicClient>;
+  walletClient: ReturnType<typeof createWalletClient>;
+  account: ReturnType<typeof privateKeyToAccount>;
+  chain: typeof sepolia | typeof L1_LOCAL_CHAIN;
+} {
+  if (L1_LOCAL) {
+    const account = privateKeyToAccount(loadOperatorPrivateKey());
+    const publicClient = createPublicClient({ chain: L1_LOCAL_CHAIN, transport: http(L1_LOCAL_RPC_URL, { timeout: 60_000 }) });
+    const walletClient = createWalletClient({ account, chain: L1_LOCAL_CHAIN, transport: http(L1_LOCAL_RPC_URL, { timeout: 60_000 }) });
+    return { publicClient, walletClient, account, chain: L1_LOCAL_CHAIN };
+  }
+  const { rpcUrl, pk } = loadSepoliaConfig();
+  const { publicClient, walletClient, account } = makeSepoliaClients(rpcUrl, pk);
+  return { publicClient, walletClient, account, chain: sepolia };
+}
+
 /** JSON-serializes a viem receipt (bigint fields included) for archival under data/receipts/<RUN_ID>/. */
 function receiptToJson(receipt: unknown): string {
   return JSON.stringify(receipt, (_key, value) => (typeof value === "bigint" ? value.toString() : value), 2);
@@ -461,7 +528,7 @@ async function deployAndCommitForAnchor(
   const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
   const address = deployReceipt.contractAddress as Address;
 
-  const ids = idsForVariant(variantId, deriveElementIds(ctx.seed, n));
+  const ids = sortedElementIds(deriveElementIds(ctx.seed, n));
   const idChunks = chunk(ids, SETUP_CHUNK_SIZE);
   let setupTxCount = 0;
   for (const idsChunk of idChunks) {
@@ -557,26 +624,40 @@ async function deployAndCommitForAnchor(
 
 /**
  * §4.3's L1 half: for each of the six digest-bearing variants, L1_REPETITIONS
- * times, build a fresh n=100 block on L2, then anchor its digest on Sepolia
- * via RootChainBench and record gas/calldata/tx_count/tx_hash, saving the
- * full receipt to data/receipts/<RUN_ID>/. Writes into the SAME RecordWriter
- * (and therefore the same JSONL file) the L2 campaign already produced, so
- * L1 and L2 rows for a run live side by side under one RUN_ID. Never called
- * under --dry-run (see main()).
+ * times, build a fresh n=100 block on L2, then anchor its digest on L1
+ * (real Sepolia by default, or a second local Anvil under --l1-local -- see
+ * makeL1Clients()) via RootChainBench and record gas/calldata/tx_count/
+ * tx_hash, saving the full receipt to data/receipts/<RUN_ID>/. Writes into
+ * the SAME RecordWriter (and therefore the same JSONL file) the L2
+ * campaign already produced, so L1 and L2 rows for a run live side by side
+ * under one RUN_ID. Never called under plain --dry-run (see main()); DOES
+ * run under --l1-local regardless of --dry-run, since --l1-local's whole
+ * point is to exercise this path without touching Sepolia.
  */
 async function runL1AnchorCampaign(writer: RecordWriter, runId: string, dataRoot: string): Promise<void> {
-  const { rpcUrl, pk } = loadSepoliaConfig();
-  const sepoliaClients = makeSepoliaClients(rpcUrl, pk);
+  const l1Clients = makeL1Clients();
+  const l1Label = L1_LOCAL ? `local Anvil (${L1_LOCAL_RPC_URL})` : "Sepolia";
+
+  if (L1_LOCAL) {
+    // A second, freshly-started local Anvil has no funded accounts unless
+    // the operator address happens to be one of its 10 built-in dev
+    // accounts (it isn't here -- OPERATOR_PRIVATE_KEY is a project-specific
+    // key, already funded on the L2 Anvil by an earlier, separate setup
+    // step, but a brand-new instance on a different port starts from
+    // genesis with nothing sent to it). Real Sepolia is never touched by
+    // this branch (L1_LOCAL only), so this cheat is safe.
+    await setBalance(l1Clients.publicClient, l1Clients.account.address, "0x21e19e0c9bab2400000" as Hex); // 10000 ETH
+  }
 
   const rootChainBenchArtifact = loadArtifact(ROOT_CHAIN_BENCH_ARTIFACT);
-  console.log(`[e1_commit_cost] deploying RootChainBench to Sepolia (operator ${sepoliaClients.account.address})...`);
-  const deployHash = await sepoliaClients.walletClient.deployContract({
+  console.log(`[e1_commit_cost] deploying RootChainBench to ${l1Label} (operator ${l1Clients.account.address})...`);
+  const deployHash = await l1Clients.walletClient.deployContract({
     abi: rootChainBenchArtifact.abi,
     bytecode: rootChainBenchArtifact.bytecode,
-    account: sepoliaClients.account,
-    chain: sepolia,
+    account: l1Clients.account,
+    chain: l1Clients.chain,
   });
-  const deployReceipt = await sepoliaClients.publicClient.waitForTransactionReceipt({ hash: deployHash });
+  const deployReceipt = await l1Clients.publicClient.waitForTransactionReceipt({ hash: deployHash });
   const rootChainBenchAddress = deployReceipt.contractAddress as Address;
   console.log(`[e1_commit_cost] RootChainBench deployed at ${rootChainBenchAddress} (tx ${deployHash})`);
 
@@ -654,28 +735,28 @@ async function runL1AnchorCampaign(writer: RecordWriter, runId: string, dataRoot
       const t0 = process.hrtime.bigint();
       const submitHash: Hex =
         "root" in digest
-          ? await sepoliaClients.walletClient.writeContract({
+          ? await l1Clients.walletClient.writeContract({
               address: rootChainBenchAddress,
               abi: rootChainBenchArtifact.abi,
               functionName: "submitBlockRoot",
               args: [digest.root],
-              account: sepoliaClients.account,
-              chain: sepolia,
+              account: l1Clients.account,
+              chain: l1Clients.chain,
               gas: L1_TX_GAS_LIMIT,
             })
-          : await sepoliaClients.walletClient.writeContract({
+          : await l1Clients.walletClient.writeContract({
               address: rootChainBenchAddress,
               abi: rootChainBenchArtifact.abi,
               functionName: "submitBlockPoint",
               args: [digest.x, digest.y],
-              account: sepoliaClients.account,
-              chain: sepolia,
+              account: l1Clients.account,
+              chain: l1Clients.chain,
               gas: L1_TX_GAS_LIMIT,
             });
-      const submitReceipt = await sepoliaClients.publicClient.waitForTransactionReceipt({ hash: submitHash });
+      const submitReceipt = await l1Clients.publicClient.waitForTransactionReceipt({ hash: submitHash });
       const t1 = process.hrtime.bigint();
 
-      const tx = await sepoliaClients.publicClient.getTransaction({ hash: submitHash });
+      const tx = await l1Clients.publicClient.getTransaction({ hash: submitHash });
       const byteStats = calldataByteStats(tx.input);
 
       const receiptPath = path.join(receiptsDir, `${cellId.replace(/\./g, "_")}_rep${r}.json`);
@@ -746,7 +827,10 @@ async function main(): Promise<void> {
 
   console.log(`[e1_commit_cost] L2 campaign complete -> ${writer.path}`);
 
-  if (DRY_RUN) {
+  if (L1_LOCAL) {
+    console.log(`[e1_commit_cost] --l1-local: running the L1 anchoring path against ${L1_LOCAL_RPC_URL} instead of Sepolia.`);
+    await runL1AnchorCampaign(writer, runId, dataRoot);
+  } else if (DRY_RUN) {
     console.log("[e1_commit_cost] --dry-run: skipping L1 Sepolia anchoring entirely, no L1 transaction sent.");
   } else {
     await runL1AnchorCampaign(writer, runId, dataRoot);

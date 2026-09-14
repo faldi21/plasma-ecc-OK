@@ -409,7 +409,22 @@ menyembunyikannya dengan menaikkan batas gas hanya untuk sel itu.
 **Menjawab:** R2-M5 ("Tabel 5 menghilangkan biaya sync L1"), R1-5.
 **Mengisi:** Tabel `tab:op-gas`.
 
-Ukur gas per pemanggilan, masing-masing N repetisi, **cold-state dan warm-state dicatat terpisah**:
+Ukur gas per pemanggilan, masing-masing N repetisi, **`slot_init` dan
+`slot_update` dicatat terpisah**:
+
+- **Bukan** cold/warm access EIP-2929 — access list di-reset tiap
+  transaksi, jadi dua transaksi terpisah berturutan tetap sama-sama
+  "cold" dalam pengertian itu; label itu tidak bermakna di sini.
+- Yang benar-benar diukur adalah perbedaan biaya SSTORE nol→nonnol
+  (`slot_init`) versus nonnol→nonnol (`slot_update`) pada slot
+  bersama/global yang disentuh fungsi tersebut (nonce, counter, panjang
+  array) — bukan pada slot per-elemen (mapping id baru selalu nol→nonnol
+  di kedua panggilan, karena id-nya memang berbeda).
+- Metodologi: dalam satu snapshot (L2) atau satu rangkaian transaksi
+  nyata tanpa jeda (L1, yang tidak punya snapshot/revert), fungsi yang
+  sama dipanggil dua kali, **masing-masing sebagai transaksi terpisah**,
+  pada dua target yang berbeda dan baru disiapkan. Panggilan pertama =
+  `slot_init`; panggilan kedua = `slot_update`.
 
 | Fungsi | Layer | Parameter uji |
 |---|---|---|
@@ -421,7 +436,7 @@ Ukur gas per pemanggilan, masing-masing N repetisi, **cold-state dan warm-state 
 | `updateUtxoBlock` | L1 | 1 UTXO |
 | `registerExitUtxo` | L1 | 1 exit UTXO |
 | `startExit` | L1 | dengan witness 64 B |
-| `finalizeExit` | L1 | setelah EXIT_PERIOD (pakai `evm_increaseTime` di fork lokal Sepolia kalau perlu) |
+| `finalizeExit` | L1 | setelah EXIT_PERIOD (diukur di Anvil lokal dengan `evm_increaseTime`, bukan Sepolia — lihat catatan di `bench/e2_sync_gas.ts`) |
 
 **Turunan wajib:** biaya L1 amortisasi per transfer L2 =
 `(gas submitBlock + Σ gas sync per blok) / jumlah transfer per blok`.

@@ -1,7 +1,7 @@
 /**
  * E2 -- L1 sync overhead campaign (docs/TICKETS.md T6; docs/EXPERIMENT_PRD.md
  * §5). Measures gas for 9 functions across RootChainUTXO.sol (L1) and
- * PlasmaChainUTXO.sol (L2), cold-state and warm-state recorded separately,
+ * PlasmaChainUTXO.sol (L2), slot_init and slot_update recorded separately,
  * N repetitions each:
  *
  *   createDepositUtxo (L2), transferUtxoBatch (L2, B=100)
@@ -9,28 +9,32 @@
  *   {10,50,100}), updateUtxoBlock, registerExitUtxo, startExit,
  *   finalizeExit (all L1)
  *
- * Cold vs warm (§5's own wording, and §3.3's framing of this as an SSTORE
- * zero->nonzero vs nonzero->nonzero question rather than an EIP-2929
- * access-list one, since the access list resets every transaction and
- * would not distinguish two back-to-back calls anyway): within ONE
- * snapshot (L2) or one unbroken sequence of real transactions (L1, which
- * has no snapshot/revert), the function is called twice on two distinct,
- * freshly-prepared targets. The FIRST call is "cold": every shared/global
- * slot the function touches (nonces, counters, array lengths) is being
- * written for the first time this snapshot. The SECOND call is "warm":
- * those same shared slots are now already nonzero, even though the
- * per-target mapping slot (a fresh id either way) is cold on both calls.
- * This is the working interpretation carried over from this ticket's own
- * design notes; it has not been separately confirmed against a reviewer
- * or a second source, so treat "cold"/"warm" cell_id labels as this
- * specific, stated definition, not a general claim about EVM warm/cold
- * access.
+ * slot_init vs slot_update (renamed from an earlier cold/warm draft, per
+ * explicit correction: this is NOT EIP-2929 cold/warm access -- the access
+ * list resets every transaction, so two back-to-back, separate
+ * transactions are both "cold" in that sense and the label would be
+ * meaningless). What is actually being measured is the SSTORE gas
+ * schedule's zero->nonzero vs nonzero->nonzero distinction (§3.3): within
+ * ONE snapshot (L2) or one unbroken sequence of real transactions (L1,
+ * which has no snapshot/revert), the function is called twice, in two
+ * SEPARATE transactions, on two distinct, freshly-prepared targets.
+ * "slot_init" is the first call: every shared/global slot the function
+ * touches (nonces, counters, array lengths) is written for the first time
+ * this snapshot (a zero->nonzero SSTORE). "slot_update" is the second
+ * call, in its own separate transaction: those same shared slots are now
+ * already nonzero (a cheaper nonzero->nonzero SSTORE), even though the
+ * per-target mapping slot (a fresh id either way) is a zero->nonzero write
+ * on both calls. This is the working interpretation carried over from
+ * this ticket's own design notes; it has not been separately confirmed
+ * against a reviewer or a second source, so treat "slot_init"/
+ * "slot_update" cell_id labels as this specific, stated definition.
  *
  * Two independent groups, run by two independent orchestrators (neither
  * reuses bench/harness/runner.ts's runCampaign(), which measures one
- * result per cell per repetition -- cold/warm pairs need two measured
- * calls sharing ONE unmeasured-setup + snapshot, which runCampaign's
- * per-cell snapshot/revert loop cannot express):
+ * result per cell per repetition -- slot_init/slot_update pairs need two
+ * measured calls, each its own transaction, sharing ONE unmeasured-setup +
+ * snapshot, which runCampaign's per-cell snapshot/revert loop cannot
+ * express):
  *
  *   runL2Campaign()  -- createDepositUtxo/transferUtxoBatch against local
  *     Anvil, snapshot/revert per repetition. ALWAYS runs, including under
@@ -113,14 +117,37 @@ const N_CURVE = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd03641
 
 const secp256k1 = new EC("secp256k1");
 
-/** utxoId*G, mirroring ECCAccumulator.add's Point(GX,GY).scalarMul(uint256(element)). */
-function elemPointG(utxoId: Hex): { x: bigint; y: bigint } {
-  const scalar = BigInt(utxoId) % N_CURVE;
-  const p = secp256k1.g.mul(scalar.toString(16));
+/**
+ * Converts an `elliptic` curve point to {x,y} bigints, using (0,0) as the
+ * point-at-infinity sentinel -- matches ECCMath.pointAdd's own convention
+ * (contracts/src/libraries/ECCMath.sol lines 41-42, 54-56), where (0,0) is
+ * never a valid non-infinity point on secp256k1 (0 doesn't satisfy
+ * y^2 = x^3 + 7 mod P, so it can never collide with a real point). Without
+ * this guard, `elliptic`'s internal identity representation (null
+ * coordinates) makes .getX()/.getY() throw -- a real bug caught by a
+ * TS-vs-Solidity parity check across 56 seeded/edge cases (3 of which hit
+ * exactly this: utxoId=0, utxoId=N, and utxoId chosen so elemPoint==acc)
+ * before this guard was added.
+ */
+function pointToXY(p: any): { x: bigint; y: bigint } {
+  if (p.isInfinity()) return { x: 0n, y: 0n };
   return {
     x: BigInt("0x" + p.getX().toString(16).padStart(64, "0")),
     y: BigInt("0x" + p.getY().toString(16).padStart(64, "0")),
   };
+}
+
+/** The elliptic-curve point object for utxoId*G (elliptic's own
+ * representation, infinity included) -- kept internal so callers that
+ * need to .add()/.neg() it don't have to round-trip through (0,0). */
+function elemPointRaw(utxoId: Hex) {
+  const scalar = BigInt(utxoId) % N_CURVE;
+  return secp256k1.g.mul(scalar.toString(16));
+}
+
+/** utxoId*G, mirroring ECCAccumulator.add's Point(GX,GY).scalarMul(uint256(element)). */
+function elemPointG(utxoId: Hex): { x: bigint; y: bigint } {
+  return pointToXY(elemPointRaw(utxoId));
 }
 
 /**
@@ -129,13 +156,13 @@ function elemPointG(utxoId: Hex): { x: bigint; y: bigint } {
  * always verifies, for ANY acc/id pair) -- see this file's docblock.
  */
 function forgeWitness(blockAccumulator: { x: bigint; y: bigint }, utxoId: Hex): { x: bigint; y: bigint } {
-  const acc = secp256k1.curve.point(blockAccumulator.x.toString(16), blockAccumulator.y.toString(16));
-  const elem = secp256k1.curve.point(elemPointG(utxoId).x.toString(16), elemPointG(utxoId).y.toString(16));
+  const acc =
+    blockAccumulator.x === 0n && blockAccumulator.y === 0n
+      ? secp256k1.curve.point(null, null)
+      : secp256k1.curve.point(blockAccumulator.x.toString(16), blockAccumulator.y.toString(16));
+  const elem = elemPointRaw(utxoId);
   const witness = acc.add(elem.neg());
-  return {
-    x: BigInt("0x" + witness.getX().toString(16).padStart(64, "0")),
-    y: BigInt("0x" + witness.getY().toString(16).padStart(64, "0")),
-  };
+  return pointToXY(witness);
 }
 
 // ---------------------------------------------------------------- Helpers
@@ -209,10 +236,10 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
     const seed = seedFor(BASE_SEED, r);
     const snapId = await snapshot(publicClient);
     try {
-      // ---- createDepositUtxo: cold then warm, two distinct fresh ids ----
+      // ---- createDepositUtxo: slot_init then slot_update, two distinct fresh ids ----
       const depositIds = deriveElementIds(seed + 1, 2);
       for (let i = 0; i < 2; i++) {
-        const state = i === 0 ? "cold" : "warm";
+        const state = i === 0 ? "slot_init" : "slot_update";
         const t0 = process.hrtime.bigint();
         const hash = await operatorWalletClient.writeContract({
           address,
@@ -238,7 +265,7 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
         });
       }
 
-      // ---- transferUtxoBatch: cold then warm, B=100 inputs each ----
+      // ---- transferUtxoBatch: slot_init then slot_update, B=100 inputs each ----
       // Unmeasured setup: fund 2*B deposit UTXOs owned by the operator (so
       // the operator can call transferUtxoBatch on them directly as
       // msg.sender == owner), chunked to fit under the block gas limit.
@@ -259,11 +286,11 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
         }
       }
 
-      const coldInputs = fundIds.slice(0, BATCH_B);
-      const warmInputs = fundIds.slice(BATCH_B, 2 * BATCH_B);
+      const initInputs = fundIds.slice(0, BATCH_B);
+      const updateInputs = fundIds.slice(BATCH_B, 2 * BATCH_B);
       for (const [state, inputs] of [
-        ["cold", coldInputs],
-        ["warm", warmInputs],
+        ["slot_init", initInputs],
+        ["slot_update", updateInputs],
       ] as const) {
         const outputOwners = inputs.map((_, i) => recipients[i % recipients.length].address);
         const outputAmounts = inputs.map(() => 1_000_000_000_000_000_000n);
@@ -394,8 +421,8 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
   for (let r = 0; r < L1_REPETITIONS; r++) {
     const seed = seedFor(BASE_SEED, r);
 
-    // ---- deposit (ERC20): cold then warm ----
-    for (const state of ["cold", "warm"] as const) {
+    // ---- deposit (ERC20): slot_init then slot_update ----
+    for (const state of ["slot_init", "slot_update"] as const) {
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
         address: rootChainAddress,
@@ -420,9 +447,9 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       });
     }
 
-    // ---- depositETH: cold then warm ----
+    // ---- depositETH: slot_init then slot_update ----
     const depositEthIds: Hex[] = [];
-    for (const state of ["cold", "warm"] as const) {
+    for (const state of ["slot_init", "slot_update"] as const) {
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
         address: rootChainAddress,
@@ -449,9 +476,9 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       });
     }
 
-    // ---- syncUtxoSpent: cold then warm, on the two depositETH utxos above ----
+    // ---- syncUtxoSpent: slot_init then slot_update, on the two depositETH utxos above ----
     for (let i = 0; i < 2; i++) {
-      const state = i === 0 ? "cold" : "warm";
+      const state = i === 0 ? "slot_init" : "slot_update";
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
         address: rootChainAddress,
@@ -476,15 +503,15 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       });
     }
 
-    // ---- batchSyncUtxoSpent: for each n, cold then warm, 2n fresh unspent utxos ----
+    // ---- batchSyncUtxoSpent: for each n, slot_init then slot_update, 2n fresh unspent utxos ----
     for (const n of BATCH_SYNC_SIZES) {
       const ids: Hex[] = [];
       for (let i = 0; i < 2 * n; i++) ids.push(await depositETHFresh());
-      const coldIds = ids.slice(0, n);
-      const warmIds = ids.slice(n, 2 * n);
+      const initIds = ids.slice(0, n);
+      const updateIds = ids.slice(n, 2 * n);
       for (const [state, batchIds] of [
-        ["cold", coldIds],
-        ["warm", warmIds],
+        ["slot_init", initIds],
+        ["slot_update", updateIds],
       ] as const) {
         const txHashes = batchIds.map((_, i) => `0x${i.toString(16).padStart(2, "0").repeat(32)}`.slice(0, 66) as Hex);
         const t0 = process.hrtime.bigint();
@@ -513,10 +540,10 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       }
     }
 
-    // ---- updateUtxoBlock: cold then warm, two fresh createdInBlock==0 utxos ----
+    // ---- updateUtxoBlock: slot_init then slot_update, two fresh createdInBlock==0 utxos ----
     const updateTargets = [await depositETHFresh(), await depositETHFresh()];
     for (let i = 0; i < 2; i++) {
-      const state = i === 0 ? "cold" : "warm";
+      const state = i === 0 ? "slot_init" : "slot_update";
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
         address: rootChainAddress,
@@ -541,10 +568,10 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       });
     }
 
-    // ---- registerExitUtxo: cold then warm, two fresh unregistered ids ----
+    // ---- registerExitUtxo: slot_init then slot_update, two fresh unregistered ids ----
     const exitIds = deriveElementIds(seed + 3, 2);
     for (let i = 0; i < 2; i++) {
-      const state = i === 0 ? "cold" : "warm";
+      const state = i === 0 ? "slot_init" : "slot_update";
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
         address: rootChainAddress,
@@ -569,10 +596,10 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
       });
     }
 
-    // ---- startExit: cold then warm, two fresh unspent/unexited utxos ----
+    // ---- startExit: slot_init then slot_update, two fresh unspent/unexited utxos ----
     const startExitTargets = [await depositETHFresh(), await depositETHFresh()];
     for (let i = 0; i < 2; i++) {
-      const state = i === 0 ? "cold" : "warm";
+      const state = i === 0 ? "slot_init" : "slot_update";
       const witness = forgeWitness(arbitraryBlockPoint, startExitTargets[i]);
       const t0 = process.hrtime.bigint();
       const hash = await walletClient.writeContract({
@@ -683,7 +710,7 @@ async function runFinalizeExitCampaign(writer: RecordWriter, runId: string, envH
       await publicClient.request({ method: "evm_mine" as any, params: [] as any });
 
       for (let i = 0; i < 2; i++) {
-        const state = i === 0 ? "cold" : "warm";
+        const state = i === 0 ? "slot_init" : "slot_update";
         const t0 = process.hrtime.bigint();
         const hash = await operatorWalletClient.writeContract({
           address,
@@ -748,7 +775,13 @@ async function main(): Promise<void> {
   for (const line of lines.slice(0, 6)) console.log(line);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Guarded so this file is importable (e.g. by a forgeWitness parity check)
+// without triggering a full campaign run as a side effect of import.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export { forgeWitness, elemPointG, GX, GY, N_CURVE };
