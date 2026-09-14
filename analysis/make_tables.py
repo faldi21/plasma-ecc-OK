@@ -82,11 +82,23 @@ COMMIT_VARIANTS = [
     ("merkle", "Merkle root"),
 ]
 
-E2_FUNCTIONS = [
-    "deposit",
-    "depositETH",
+# tab_op_gas.tex Block A -- has a real counterpart in BOTH evaluated L2
+# contracts (PlasmaChainUTXO.sol for ASC, PlasmaChainUTXOMerkle.sol for
+# Merkle -- identical signatures), measured against both by
+# bench/e2_sync_gas.ts, cell_id-prefixed e2.asc.*/e2.merkle.*.
+E2_FUNCTIONS_L2_BOTH_SYSTEMS = [
     "createDepositUtxo",
     "transferUtxoBatch",
+]
+
+# tab_op_gas.tex Block B -- exist ONLY on RootChainUTXO.sol (L1). This
+# repo has no Merkle-based RootChain contract to measure (docs/
+# EXPERIMENT_PRD.md §5's own explicit, deliberate scope note) -- Block B
+# never gets a Merkle or ASC/Merkle-ratio column, by design, not because
+# the measurement is missing.
+E2_FUNCTIONS_L1_ASC_ONLY = [
+    "deposit",
+    "depositETH",
     "syncUtxoSpent",
     "batchSyncUtxoSpent",
     "updateUtxoBlock",
@@ -455,28 +467,45 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
 # ---------------------------------------------------------------- tab_op_gas.tex
 
 
-def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
-    lines = []
-    for fn in E2_FUNCTIONS:
-        init_cell = f"e2.{fn}.slot_init"
-        update_cell = f"e2.{fn}.slot_update"
-        asc_init = gas_cell_text(e2, init_cell)
-        asc_update = gas_cell_text(e2, update_cell)
-        # No Merkle-system equivalent is measured anywhere in this repo
-        # (see this module's docblock) -- always \fillin{}, never invented.
-        merkle_init = fillin()
-        merkle_update = fillin()
-        ratio_init = fillin()
-        ratio_update = fillin()
-        lines.append(
-            f"\\texttt{{{fn}}} (slot\\_init) & {merkle_init} & {asc_init} & {ratio_init} \\\\\n"
-            f"\\texttt{{{fn}}} (slot\\_update) & {merkle_update} & {asc_update} & {ratio_update} \\\\"
-        )
+def _op_gas_ratio_text(e2: dict[str, dict[str, str]], asc_cell: str, merkle_cell: str) -> str:
+    asc_mean = cell_num(e2, asc_cell, "gas_used_mean")
+    merkle_mean = cell_num(e2, merkle_cell, "gas_used_mean")
+    if asc_mean is None or merkle_mean is None or merkle_mean == 0:
+        return fillin()
+    return fmt_float(asc_mean / merkle_mean, 2)
 
-    body = "\n".join(lines)
+
+def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
+    """Two blocks, deliberately different column shapes (docs/
+    EXPERIMENT_PRD.md §5's own note on why): Block A covers the two L2
+    operations that exist in both evaluated contracts (real Merkle and
+    ASC/Merkle-ratio columns); Block B covers the seven L1 operations that
+    exist ONLY on RootChainUTXO.sol (ASC-only deployment) -- Block B has
+    NO Merkle or ratio column at all, not a Merkle column full of
+    \\fillin{}, because there is nothing to eventually fill in: no
+    Merkle-based RootChain contract exists in this repo to measure."""
+    block_a_lines = []
+    for fn in E2_FUNCTIONS_L2_BOTH_SYSTEMS:
+        for state, state_label in [("slot_init", "slot\\_init"), ("slot_update", "slot\\_update")]:
+            asc_cell = f"e2.asc.{fn}.{state}"
+            merkle_cell = f"e2.merkle.{fn}.{state}"
+            asc_text = gas_cell_text(e2, asc_cell)
+            merkle_text = gas_cell_text(e2, merkle_cell)
+            ratio_text = _op_gas_ratio_text(e2, asc_cell, merkle_cell)
+            block_a_lines.append(f"\\texttt{{{fn}}} ({state_label}) & {merkle_text} & {asc_text} & {ratio_text} \\\\")
+    block_a_body = "\n".join(block_a_lines)
+
+    block_b_lines = []
+    for fn in E2_FUNCTIONS_L1_ASC_ONLY:
+        for state, state_label in [("slot_init", "slot\\_init"), ("slot_update", "slot\\_update")]:
+            asc_cell = f"e2.{fn}.{state}"
+            asc_text = gas_cell_text(e2, asc_cell)
+            block_b_lines.append(f"\\texttt{{{fn}}} ({state_label}) & {asc_text} \\\\")
+    block_b_body = "\n".join(block_b_lines)
+
     return f"""\\begin{{table*}}[!t]
-\\caption{{Gas per Operation, slot\\_init versus slot\\_update (mean $\\pm$ SD)}}
-\\label{{tab:op-gas}}
+\\caption{{Gas per Operation, L2 (Both Systems), slot\\_init versus slot\\_update (mean $\\pm$ SD)}}
+\\label{{tab:op-gas-l2}}
 \\centering
 \\scriptsize
 \\setlength{{\\tabcolsep}}{{3pt}}
@@ -484,10 +513,25 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
 \\toprule
 \\textbf{{Operation (slot state)}} & \\textbf{{Merkle}} & \\textbf{{ASC}} & \\textbf{{ASC/Merkle}} \\\\
 \\midrule
-{body}
+{block_a_body}
 \\bottomrule
 \\end{{tabular}}
 \\end{{table*}}
+
+\\begin{{table}}[!t]
+\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD)\\footnote{{The evaluated artifact does not include a Merkle-based RootChain contract, so L1 cost is reported as an absolute figure for the ASC deployment only, not as a cross-primitive comparison -- a deliberate scope limit (docs/EXPERIMENT\\_PRD.md \\S5), not an unmeasured gap.}}}}
+\\label{{tab:op-gas-l1}}
+\\centering
+\\scriptsize
+\\setlength{{\\tabcolsep}}{{3pt}}
+\\begin{{tabular}}{{@{{}}lr@{{}}}}
+\\toprule
+\\textbf{{Operation (slot state)}} & \\textbf{{ASC gas}} \\\\
+\\midrule
+{block_b_body}
+\\bottomrule
+\\end{{tabular}}
+\\end{{table}}
 """
 
 

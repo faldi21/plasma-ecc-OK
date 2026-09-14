@@ -438,6 +438,30 @@ Ukur gas per pemanggilan, masing-masing N repetisi, **`slot_init` dan
 | `startExit` | L1 | dengan witness 64 B |
 | `finalizeExit` | L1 | setelah EXIT_PERIOD (diukur di Anvil lokal dengan `evm_increaseTime`, bukan Sepolia — lihat catatan di `bench/e2_sync_gas.ts`) |
 
+**Batasan cakupan yang disengaja — ASC vs Merkle di tabel `tab:op-gas`:**
+`tab:op-gas` terbagi dua blok dengan cakupan primitif yang berbeda, bukan
+kelalaian pengukuran:
+
+- **Blok A — Operasi L2 (kedua sistem):** `createDepositUtxo` (relay) dan
+  `transferUtxoBatch` punya padanan persis di kedua kontrak L2 yang
+  dievaluasi (`PlasmaChainUTXO.sol` untuk ASC, `PlasmaChainUTXOMerkle.sol`
+  untuk Merkle — signature identik). Kedua fungsi ini diukur terhadap
+  **kedua** sistem, `slot_init`/`slot_update` terpisah untuk masing-masing,
+  sehingga kolom Merkle dan rasio ASC/Merkle di blok ini terisi angka
+  nyata.
+- **Blok B — Operasi L1 (khusus deployment ASC):** ketujuh fungsi lainnya
+  (`deposit`/`depositETH`, `syncUtxoSpent`, `batchSyncUtxoSpent`,
+  `updateUtxoBlock`, `registerExitUtxo`, `startExit`, `finalizeExit`)
+  hanya ada di `RootChainUTXO.sol` — artefak yang dievaluasi **tidak
+  memuat kontrak RootChain berbasis Merkle**. Ini bukan kekurangan
+  pengukuran yang belum dikerjakan: tidak ada `RootChainUTXOMerkle.sol`
+  di repo ini untuk diukur, jadi kolom Merkle dan rasio ASC/Merkle di
+  blok ini **tidak ada** (bukan `\fillin{}`, karena `\fillin{}`
+  menyiratkan "belum diukur" — di sini kolomnya memang tidak berlaku).
+  Biaya L1 dilaporkan sebagai angka mutlak untuk deployment ASC saja,
+  bukan sebagai perbandingan lintas primitif. Catatan kaki tabel
+  menyatakan hal ini secara eksplisit.
+
 **Turunan wajib:** biaya L1 amortisasi per transfer L2 =
 `(gas submitBlock + Σ gas sync per blok) / jumlah transfer per blok`.
 Angka ini yang menjawab keberatan "premis skaling gugur". Laporkan untuk n = 100.

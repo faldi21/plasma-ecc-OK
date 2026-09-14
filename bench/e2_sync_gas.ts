@@ -1,13 +1,19 @@
 /**
- * E2 -- L1 sync overhead campaign (docs/TICKETS.md T6; docs/EXPERIMENT_PRD.md
- * §5). Measures gas for 9 functions across RootChainUTXO.sol (L1) and
- * PlasmaChainUTXO.sol (L2), slot_init and slot_update recorded separately,
- * N repetitions each:
+ * E2 -- L1 sync overhead campaign (docs/TICKETS.md T6, T8-followup;
+ * docs/EXPERIMENT_PRD.md §5). Measures gas for 9 functions, slot_init and
+ * slot_update recorded separately, N repetitions each:
  *
  *   createDepositUtxo (L2), transferUtxoBatch (L2, B=100)
+ *     -- measured against BOTH deployed systems (ASC's PlasmaChainUTXO.sol
+ *     and Merkle's PlasmaChainUTXOMerkle.sol), cell_id-prefixed
+ *     e2.asc.x / e2.merkle.x, since docs/EXPERIMENT_PRD.md §5's tab:op-gas
+ *     Block A reports a real ASC/Merkle ratio for these two.
  *   deposit, depositETH, syncUtxoSpent, batchSyncUtxoSpent (n in
  *   {10,50,100}), updateUtxoBlock, registerExitUtxo, startExit,
- *   finalizeExit (all L1)
+ *   finalizeExit (all L1, against RootChainUTXO.sol -- ASC-only
+ *     deployment, cell_id unprefixed: this repo has no Merkle-based
+ *     RootChain contract to measure, a deliberate scope limit documented
+ *     in docs/EXPERIMENT_PRD.md §5, not a gap left for this file to fill)
  *
  * slot_init vs slot_update (renamed from an earlier cold/warm draft, per
  * explicit correction: this is NOT EIP-2929 cold/warm access -- the access
@@ -110,6 +116,7 @@ const BLOCK_GAS_LIMIT = 300_000_000n;
 const BATCH_B = 100;
 const BATCH_SYNC_SIZES = [10, 50, 100];
 const SETUP_GAS = 250_000_000n;
+const SETUP_CHUNK_SIZE = 100;
 
 const GX = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n;
 const GY = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n;
@@ -215,12 +222,35 @@ function baseRecord(runId: string, envHash: string, cellId: string, repetition: 
 
 // ---------------------------------------------------------------- L2: createDepositUtxo, transferUtxoBatch
 
+/**
+ * L2 operations that have a real counterpart in BOTH deployed systems
+ * (ASC's PlasmaChainUTXO.sol and Merkle's PlasmaChainUTXOMerkle.sol --
+ * identical createDepositUtxo(Batch)/transferUtxoBatch signatures, see
+ * contracts/src/PlasmaChainUTXOMerkle.sol) are measured for both,
+ * cell_id-prefixed by primitive (e2.asc.*, e2.merkle.*) so
+ * make_tables.py's tab_op_gas.tex Block A can report a real ASC/Merkle
+ * ratio column. L1 functions (runL1Campaign, below) stay unprefixed:
+ * there is no Merkle-based RootChain contract anywhere in this repo to
+ * measure, and that is documented as a deliberate scope limit (docs/
+ * EXPERIMENT_PRD.md §5), not a gap this file is expected to fill.
+ */
 async function runL2Campaign(writer: RecordWriter, runId: string, envHash: string): Promise<void> {
+  await runL2CampaignForContract(writer, runId, envHash, "asc", "PlasmaChainUTXO.sol/PlasmaChainUTXO.json");
+  await runL2CampaignForContract(writer, runId, envHash, "merkle", "PlasmaChainUTXOMerkle.sol/PlasmaChainUTXOMerkle.json");
+}
+
+async function runL2CampaignForContract(
+  writer: RecordWriter,
+  runId: string,
+  envHash: string,
+  primitive: "asc" | "merkle",
+  artifactPath: string
+): Promise<void> {
   const anvilConfig = loadAnvilConfig();
   const operatorKey = loadOperatorPrivateKey();
   const { publicClient, operatorWalletClient, operatorAccount } = makeClients(anvilConfig, operatorKey);
 
-  const { abi, bytecode } = loadArtifact("PlasmaChainUTXO.sol/PlasmaChainUTXO.json");
+  const { abi, bytecode } = loadArtifact(artifactPath);
   const deployHash = await operatorWalletClient.deployContract({
     abi,
     bytecode,
@@ -253,7 +283,7 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
         const t1 = process.hrtime.bigint();
 
         writer.write({
-          ...baseRecord(runId, envHash, `e2.createDepositUtxo.${state}`, r, seed, "L2"),
+          ...baseRecord(runId, envHash, `e2.${primitive}.createDepositUtxo.${state}`, r, seed, "L2"),
           duration_ms: formatDurationMs(t0, t1),
           function: "createDepositUtxo",
           n_elements: 1,
@@ -268,22 +298,33 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
       // ---- transferUtxoBatch: slot_init then slot_update, B=100 inputs each ----
       // Unmeasured setup: fund 2*B deposit UTXOs owned by the operator (so
       // the operator can call transferUtxoBatch on them directly as
-      // msg.sender == owner), chunked to fit under the block gas limit.
+      // msg.sender == owner), via createDepositUtxoBatch chunked to
+      // SETUP_CHUNK_SIZE (matching bench/e1_commit_cost.ts's and bench/
+      // e3_throughput.ts's own setup convention) rather than one
+      // createDepositUtxo transaction per id -- an earlier version of this
+      // loop sent 200 individual transactions here, which was always slow
+      // but became impractical once this ran twice per repetition (ASC
+      // AND Merkle): caught when a --dry-run smoke test that used to take
+      // well under a minute was still not done after 25+ minutes.
       const fundIds = deriveElementIds(seed + 2, 2 * BATCH_B);
       let setupTxCount = 0;
-      for (const idChunk of chunk(fundIds, 100)) {
-        for (const id of idChunk) {
-          const hash = await operatorWalletClient.writeContract({
-            address,
-            abi,
-            functionName: "createDepositUtxo",
-            args: [id, operatorAccount.address, "0x000000000000000000000000000000000000dEaD", 1_000_000_000_000_000_000n],
-            account: operatorWalletClient.account!,
-            chain: operatorWalletClient.chain,
-          });
-          await publicClient.waitForTransactionReceipt({ hash });
-          setupTxCount++;
+      for (const idChunk of chunk(fundIds, SETUP_CHUNK_SIZE)) {
+        const users = idChunk.map(() => operatorAccount.address);
+        const amounts = idChunk.map(() => 1_000_000_000_000_000_000n);
+        const hash = await operatorWalletClient.writeContract({
+          address,
+          abi,
+          functionName: "createDepositUtxoBatch",
+          args: [idChunk, users, "0x000000000000000000000000000000000000dEaD", amounts],
+          account: operatorWalletClient.account!,
+          chain: operatorWalletClient.chain,
+          gas: 250_000_000n,
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error(`e2.${primitive}.transferUtxoBatch: setup chunk reverted unexpectedly (tx ${hash})`);
         }
+        setupTxCount++;
       }
 
       const initInputs = fundIds.slice(0, BATCH_B);
@@ -310,7 +351,7 @@ async function runL2Campaign(writer: RecordWriter, runId: string, envHash: strin
         const t1 = process.hrtime.bigint();
 
         writer.write({
-          ...baseRecord(runId, envHash, `e2.transferUtxoBatch.${state}`, r, seed, "L2"),
+          ...baseRecord(runId, envHash, `e2.${primitive}.transferUtxoBatch.${state}`, r, seed, "L2"),
           duration_ms: formatDurationMs(t0, t1),
           function: "transferUtxoBatch",
           n_elements: BATCH_B,
