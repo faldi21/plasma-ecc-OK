@@ -91,6 +91,96 @@ main_contrasts:
 holm_correction_group: main_contrasts
 ```
 
+## Amandemen 1 — perbandingan net-of-baseline
+
+**Tanggal: 2026-09-15.** Ditulis SEBELUM ada data kampanye penuh — dipicu
+oleh temuan STRUKTURAL dari satu pilot yang dibuang (lihat Latar), bukan
+oleh hasil kampanye. Ini tidak menimpa Bagian 1–5 di atas; hanya menambah
+aturan analisis baru untuk kelompok sel `bench.commit_*`, sesuai mekanisme
+yang dijelaskan di pembuka berkas ini ("catat di bagian Riwayat perubahan
+dengan alasannya dan tanggal, jangan menimpa diam-diam").
+
+### Latar
+
+Pilot 16–18 record (RUN_ID `20260914-225925-b62f671`, **dibuang, tidak
+pernah dipakai sebagai data kampanye**) memperlihatkan bahwa
+`createBlock()` di ketujuh varian `contracts/src/commit/*.sol` memuat
+guard duplikat yang identik secara byte-for-byte —
+`if (elements[el]) return false; elements[el] = true; count++` — berbiaya
+kira-kira 20.000 gas/elemen (SSTORE dingin ke slot baru). Di n besar, suku
+bersama ini mendominasi total gas dan menyamarkan perbedaan biaya antar
+primitif digest yang sesungguhnya jadi objek RQ. Yang terlihat dari pilot
+ini adalah STRUKTUR biaya (ada satu suku O(n) yang identik di semua
+varian), **bukan arah atau besar efek antar varian** — 16–18 record dari
+satu repetisi bukan dasar kesimpulan efek apa pun, dan tidak dipakai
+sebagai itu di sini.
+
+### Aturan untuk sel `bench.commit_*`
+
+Besaran yang diuji adalah selisih terhadap baseline, dipasangkan per
+`(n, repetition, seed)`:
+
+```
+delta(v, n, r) = gas(v, n, r) - gas(CommitBaseline, n, r)
+```
+
+Uji TOST (ekuivalensi, epsilon = `commit_cost_equivalence_epsilon_pct`%
+dari mean gas `CommitBaseline` pada `n` yang sama — paired TOST, bukan
+dua-sampel independen, karena `delta` sudah berupa pasangan), koreksi Holm
+(satu keluarga per nilai `n`, lintas seluruh varian non-baseline yang
+punya data pada `n` itu — mengikuti pola yang sudah ada di Bagian 2: satu
+tabel = satu keluarga Holm), dan bootstrap CI (seeded, memakai
+`bootstrap_resamples`/`bootstrap_seed` yang sama seperti Bagian 5 di atas,
+resampling pasangan `(v,n,r)` bersama) semuanya dijalankan atas `delta`,
+**TIDAK atas gas absolut**. Gas absolut tetap dilaporkan di tabel sebagai
+kolom terpisah — deskriptif saja, bukan objek uji.
+
+### Aturan untuk sel `sys.plasma_*`
+
+**TIDAK dikurangi baseline apa pun.** Di sini total gas adalah objek yang
+diminati — biaya nyata mengoperasikan sistem L2 penuh, bukan primitif
+digest yang diisolasi. Angka `bench.*` dan `sys.*` tidak pernah
+dibandingkan lintas kelompok (aturan yang sudah berlaku sebelum amandemen
+ini; ditegaskan ulang di sini karena berkaitan langsung dengan aturan
+net-of-baseline di atas).
+
+### Kelayakan blok
+
+Ambang kelayakan blok adalah `mainnet_block_gas_limit` = 36.000.000 gas,
+dinyatakan sebagai batas gas blok Ethereum pada tanggal kampanye ini
+dijalankan — bukan batas Anvil (`ANVIL_GAS_LIMIT` di `.env.paper1`, jauh
+lebih tinggi, dipakai murni supaya kurva gas tetap terukur melewati batas
+nyata, bukan untuk klaim kelayakan). Dicatat per record lewat field
+`exceeds_mainnet_block_limit` (`bench/harness/record.ts`, pre-freeze
+harness fix). Batas gas Anvil tidak pernah dipakai untuk klaim kelayakan
+blok nyata.
+
+### Provenance transaksi
+
+Transaksi commit yang diukur diberi salt pada `maxPriorityFeePerGas`
+(naik monoton per transaksi terukur, lihat `bench/e1_commit_cost.ts`)
+semata-mata untuk menjamin `tx_hash` unik di seluruh RUN_ID — di bawah
+isolasi snapshot/revert plus warm-up, dua sel berbeda bisa lahir dengan
+transaksi ter-signed yang byte-identik tanpa salt ini (pre-freeze harness
+fix). Salt ini HANYA mengubah fee/signature transaksi, tidak pernah
+memengaruhi `gas_used`, yang tetap murni hasil eksekusi EVM.
+
+### Parameter baru (dibaca `analysis/stats.py`)
+
+```yaml
+# analysis_plan_amendment_1.yml -- BEKU sejak 2026-09-15. Digabung dengan
+# blok analysis_plan.yml di Bagian 5 di atas oleh stats.py (kunci baru,
+# tidak ada tabrakan nama); blok Bagian 5 TIDAK diubah oleh amandemen ini.
+commit_cost_baseline_variant: baseline
+commit_cost_equivalence_epsilon_pct: 3.0
+mainnet_block_gas_limit: 36000000
+```
+
 ## Riwayat perubahan
 
+- 2026-09-15: Amandemen 1 ditambahkan — perbandingan net-of-baseline untuk
+  `bench.commit_*` (TOST/Holm/bootstrap atas delta, bukan gas absolut) dan
+  ambang kelayakan blok 36.000.000 gas, dipicu temuan struktural dari
+  pilot 16-18 record yang dibuang (RUN_ID `20260914-225925-b62f671`,
+  bukan hasil kampanye). Lihat bagian "Amandemen 1" di atas.
 - 2026-09-14: dibuat, dibekukan sebelum kampanye penuh (T8, docs/TICKETS.md).

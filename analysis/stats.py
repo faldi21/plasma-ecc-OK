@@ -30,6 +30,27 @@ with only T=500, or a cell with < 2 ok repetitions) is reported with
 available=false and a reason -- never fabricated, extrapolated, or
 silently omitted (CLAUDE.md IRON RULE 1).
 
+Amandemen 1 (ANALYSIS_PLAN.md, 2026-09-14 frozen dataset trigger --
+2026-09-15): a second net-of-baseline analysis for E1's bench.commit_*
+cells, added here alongside the E3 analysis above (independent of it --
+either can run with the other's input missing, see load_by_rep/
+load_e1_commit_records tolerating a missing file):
+
+  - delta(v, n, r) = gas(v, n, r) - gas(CommitBaseline, n, r), paired by
+    (n, repetition, seed) using the raw data/raw/<RUN_ID>/
+    e1_commit_cost.jsonl records directly (aggregate.py's e1_commit_cost.csv
+    is a per-cell summary across repetitions and cannot reconstruct this
+    pairing) -- reported in stats.json's "commit_cost_deltas" key.
+  - TOST equivalence is a PAIRED test (statsmodels' ttost_paired) against
+    ANALYSIS_PLAN's commit_cost_equivalence_epsilon_pct% of
+    CommitBaseline's own mean gas at that n; Holm-Bonferroni is applied
+    once per n, across every non-baseline variant with data at that n
+    (reusing holm_correct() unchanged); the bootstrap CI is on mean(delta)
+    itself (resampling paired indices), not a ratio.
+  - sys.plasma_* is NEVER included here (ANALYSIS_PLAN.md Amandemen 1 §3):
+    total gas is what matters there, not a primitive isolated net of
+    shared bookkeeping.
+
 Usage:
   python3 analysis/stats.py --run-id <RUN_ID> --data data
 """
@@ -48,26 +69,44 @@ import yaml
 from scipy import stats as sp_stats
 from statsmodels.formula.api import ols
 from statsmodels.stats.anova import anova_lm
-from statsmodels.stats.weightstats import ttost_ind
+from statsmodels.stats.weightstats import ttost_ind, ttost_paired
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import OK_STATUSES, read_jsonl
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CELL_ID_RE = re.compile(r"^e3\.(?P<cell>[a-z_]+\.[a-z_]+)\.T(?P<t>\d+)$")
+COMMIT_CELL_RE = re.compile(r"^bench\.commit_(?P<variant>[a-z0-9_]+)\.n(?P<n>\d+)$")
 
 
 def load_analysis_plan(repo_root: Path) -> dict[str, Any]:
+    """Merges every ```yaml``` fenced block in ANALYSIS_PLAN.md, in
+    document order (later blocks' keys win only on an actual name
+    collision -- an amendment section adds new keys, it never needs to
+    redefine an existing one). This is how Amandemen 1's separate block
+    reaches this script without touching Bagian 5's original frozen
+    block byte-for-byte (IRON RULE 6: amend by adding, never overwrite)."""
     plan_path = repo_root / "ANALYSIS_PLAN.md"
     text = plan_path.read_text(encoding="utf-8")
-    m = re.search(r"```yaml\n(.*?)\n```", text, re.DOTALL)
-    if not m:
-        raise ValueError(f"{plan_path}: could not find the frozen ```yaml``` block")
-    return yaml.safe_load(m.group(1))
+    blocks = re.findall(r"```yaml\n(.*?)\n```", text, re.DOTALL)
+    if not blocks:
+        raise ValueError(f"{plan_path}: could not find any frozen ```yaml``` block")
+    merged: dict[str, Any] = {}
+    for block in blocks:
+        merged.update(yaml.safe_load(block) or {})
+    return merged
 
 
 def load_by_rep(data_root: Path, run_id: str) -> pd.DataFrame:
+    """Empty DataFrame (not an error) when e3_throughput_by_rep.csv is
+    absent -- aggregate.py only writes it when e3_throughput.jsonl exists
+    for this RUN_ID, so a RUN_ID with only E1 data is legitimate input
+    here, not a failure (the commit_cost_deltas analysis below is
+    independent of this one)."""
     path = data_root / "processed" / run_id / "e3_throughput_by_rep.csv"
     if not path.is_file():
-        raise FileNotFoundError(f"{path} does not exist -- run analysis/aggregate.py first")
+        return pd.DataFrame()
     df = pd.read_csv(path)
     if df.empty:
         return df
@@ -256,6 +295,151 @@ def holm_correct(results: list[dict[str, Any]]) -> None:
         results[idx]["holm_adjusted_p"] = running_max
 
 
+# ---------------------------------------------------------------- Amandemen 1: net-of-baseline (E1 bench.commit_*)
+
+
+def load_e1_commit_records(data_root: Path, run_id: str) -> list[dict[str, Any]]:
+    """Raw records, not the aggregated CSV -- delta needs per-(repetition,
+    seed) pairing that a per-cell mean/SD summary cannot reconstruct.
+    Reading data/raw/ directly is read-only, never a write (CLAUDE.md IRON
+    RULE 2 only forbids writing/modifying it)."""
+    path = data_root / "raw" / run_id / "e1_commit_cost.jsonl"
+    if not path.is_file():
+        return []
+    return read_jsonl(path)
+
+
+def run_commit_cost_deltas(
+    records: list[dict[str, Any]],
+    baseline_variant: str,
+    epsilon_pct: float,
+    alpha: float,
+    bootstrap_resamples: int,
+    bootstrap_seed: int,
+) -> dict[str, Any]:
+    """ANALYSIS_PLAN.md Amandemen 1 §2: delta(v, n, r) = gas(v, n, r) -
+    gas(baseline, n, r), paired per (n, repetition, seed); TOST, Holm (one
+    family per n), and bootstrap CI all run on delta, never on absolute
+    gas. sys.plasma_* is never in `records` here -- callers only load
+    e1_commit_cost.jsonl (sys.* lives in the same file but its cell_id
+    doesn't match COMMIT_CELL_RE, so it's naturally excluded, not
+    filtered by a separate check)."""
+    if not records:
+        return {"available": False, "reason_unavailable": "e1_commit_cost.jsonl not found or empty for this RUN_ID"}
+
+    # (variant, n) -> {(repetition, seed): gas_used}, "ok" records only.
+    by_variant_n: dict[tuple[str, int], dict[tuple[Any, Any], float]] = {}
+    for r in records:
+        if r.get("status") not in OK_STATUSES:
+            continue
+        m = COMMIT_CELL_RE.match(r.get("cell_id") or "")
+        if not m:
+            continue
+        if r.get("gas_used") is None:
+            continue
+        key = (r.get("repetition"), r.get("seed"))
+        by_variant_n.setdefault((m.group("variant"), int(m.group("n"))), {})[key] = float(r["gas_used"])
+
+    n_values = sorted({n for (_v, n) in by_variant_n})
+    variants = sorted({v for (v, n) in by_variant_n if v != baseline_variant})
+
+    if not n_values:
+        return {"available": False, "reason_unavailable": "no ok bench.commit_* records found"}
+
+    by_n: dict[str, list[dict[str, Any]]] = {}
+    for n in n_values:
+        baseline_map = by_variant_n.get((baseline_variant, n), {})
+        results: list[dict[str, Any]] = []
+        for variant in variants:
+            variant_map = by_variant_n.get((variant, n), {})
+            shared_keys = sorted(set(variant_map) & set(baseline_map), key=str)
+            entry: dict[str, Any] = {
+                "variant": variant,
+                "cell_id": f"bench.commit_{variant}.n{n}",
+                "n_pairs": len(shared_keys),
+            }
+            if len(shared_keys) < 2:
+                entry["available"] = False
+                entry["reason_unavailable"] = (
+                    f"n_pairs={len(shared_keys)} -- need >=2 paired (repetition, seed) with both "
+                    f"{variant} and {baseline_variant} ok at n={n}"
+                )
+                results.append(entry)
+                continue
+
+            variant_vals = np.array([variant_map[k] for k in shared_keys])
+            baseline_vals = np.array([baseline_map[k] for k in shared_keys])
+            delta = variant_vals - baseline_vals
+
+            entry["available"] = True
+            entry["mean_gas"] = float(variant_vals.mean())
+            entry["mean_delta"] = float(delta.mean())
+            entry["sd_delta"] = float(delta.std(ddof=1)) if len(delta) > 1 else None
+
+            shapiro = sp_stats.shapiro(delta) if len(delta) >= 3 else None
+            entry["shapiro_delta"] = {"statistic": float(shapiro.statistic), "p": float(shapiro.pvalue)} if shapiro else None
+            normal = shapiro is None or shapiro.pvalue >= alpha
+            # Paired-t vs Wilcoxon signed-rank, decided purely from the
+            # normality check above -- same "never pick after seeing the
+            # p-value" discipline as run_contrast's Welch-vs-Mann-Whitney
+            # choice (ANALYSIS_PLAN.md §3).
+            if normal:
+                primary = sp_stats.ttest_rel(variant_vals, baseline_vals)
+                entry["primary_test"] = "paired_t"
+                entry["primary_p"] = float(primary.pvalue)
+            else:
+                signed_rank = sp_stats.wilcoxon(delta)
+                entry["primary_test"] = "wilcoxon_signed_rank"
+                entry["primary_p"] = float(signed_rank.pvalue)
+
+            # Paired TOST (statsmodels' ttost_paired): epsilon is an
+            # ABSOLUTE band derived from the baseline's own mean gas at
+            # this n (ANALYSIS_PLAN.md Amandemen 1 §2) -- delta is already
+            # paired, so this is not the independent-samples ttost_ind
+            # run_contrast uses for E3.
+            eps_abs = (epsilon_pct / 100.0) * float(baseline_vals.mean())
+            tost_p, _lower, _upper = ttost_paired(variant_vals, baseline_vals, -eps_abs, eps_abs)
+            equivalent = bool(tost_p < alpha)
+            entry["tost"] = {
+                "epsilon_pct": epsilon_pct,
+                "epsilon_abs": eps_abs,
+                "reference": baseline_variant,
+                "reference_mean": float(baseline_vals.mean()),
+                "p": float(tost_p),
+                "equivalent": equivalent,
+            }
+
+            rng = np.random.default_rng(bootstrap_seed)
+            n_pairs = len(delta)
+            boot_means = np.empty(bootstrap_resamples)
+            for i in range(bootstrap_resamples):
+                idx = rng.integers(0, n_pairs, size=n_pairs)
+                boot_means[i] = delta[idx].mean()
+            entry["mean_delta_ci95_bootstrap"] = [
+                float(np.percentile(boot_means, 2.5)),
+                float(np.percentile(boot_means, 97.5)),
+            ]
+
+            if entry["primary_p"] < alpha:
+                entry["conclusion"] = "significantly_different_from_baseline"
+            elif equivalent:
+                entry["conclusion"] = "practically_equivalent_to_baseline"
+            else:
+                entry["conclusion"] = "inconclusive_at_this_n"
+
+            results.append(entry)
+
+        holm_correct(results)  # one Holm family per n, across this n's non-baseline variants
+        by_n[str(n)] = results
+
+    return {
+        "available": True,
+        "baseline_variant": baseline_variant,
+        "epsilon_pct": epsilon_pct,
+        "by_n": by_n,
+    }
+
+
 def run_anova(df: pd.DataFrame, t_value: int, primitives: list[str], placements: list[str], alpha: float) -> dict[str, Any]:
     subset = df[(df["t_value"] == t_value) & df["primitive"].isin(primitives) & df["placement"].isin(placements)].copy()
     counts = subset.groupby(["primitive", "placement"]).size()
@@ -315,6 +499,8 @@ def main() -> None:
     primitives = plan["anova_factors"]["primitive"]
     placements = plan["anova_factors"]["placement"]
     main_contrasts = plan["main_contrasts"]
+    commit_cost_baseline_variant = plan.get("commit_cost_baseline_variant")
+    commit_cost_epsilon_pct = plan.get("commit_cost_equivalence_epsilon_pct")
 
     data_root = Path(args.data)
     df = load_by_rep(data_root, args.run_id)
@@ -328,6 +514,20 @@ def main() -> None:
         "bootstrap_resamples": bootstrap_resamples,
         "bootstrap_seed": bootstrap_seed,
     }
+
+    # Amandemen 1: independent of the E3 anova/contrasts below -- runs
+    # (or reports unavailable) regardless of whether E3 data exists for
+    # this RUN_ID, and vice versa.
+    if commit_cost_baseline_variant is None or commit_cost_epsilon_pct is None:
+        output["commit_cost_deltas"] = {
+            "available": False,
+            "reason_unavailable": "ANALYSIS_PLAN.md missing commit_cost_baseline_variant/commit_cost_equivalence_epsilon_pct (Amandemen 1 block not found)",
+        }
+    else:
+        e1_records = load_e1_commit_records(data_root, args.run_id)
+        output["commit_cost_deltas"] = run_commit_cost_deltas(
+            e1_records, commit_cost_baseline_variant, commit_cost_epsilon_pct, alpha, bootstrap_resamples, bootstrap_seed
+        )
 
     if df.empty:
         output["anova"] = {"t_value": anova_t_value, "available": False, "reason_unavailable": "e3_throughput_by_rep.csv is empty (no ok E3 repetitions)"}

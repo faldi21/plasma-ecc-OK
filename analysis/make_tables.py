@@ -9,7 +9,11 @@ no computation beyond formatting (mean±SD strings, thousands separators,
 
   tab_params.tex        protocol parameters, code version, anvil args
   tab_commit_cost.tex   7 bench.commit_* cells, n=10/100/1000 L2 gas,
-                         + L1 anchoring gas/calldata/tx-count at n=100
+                         + delta vs. baseline at each n (ANALYSIS_PLAN.md
+                         Amandemen 1 -- from stats.json's
+                         commit_cost_deltas, computed by stats.py, only
+                         formatted here) + L1 anchoring gas/calldata/
+                         tx-count at n=100
   tab_sys_series.tex    sys.plasma_v0 vs sys.plasma_eccmath, n=10..200,
                          with gas diff and %diff
   tab_decomposition.tex n=100 decomposition: as-submitted, memory-
@@ -150,6 +154,25 @@ def fmt_int(x: Any) -> str:
     if is_missing(x):
         return fillin()
     return f"{int(round(float(x))):,}"
+
+
+def fmt_signed_int(x: Any) -> str:
+    """Like fmt_int, but with an explicit leading sign -- for a delta
+    column (ANALYSIS_PLAN.md Amandemen 1), the sign is the point, not
+    just the magnitude."""
+    if is_missing(x):
+        return fillin()
+    v = int(round(float(x)))
+    return f"{'+' if v >= 0 else ''}{v:,}"
+
+
+def fmt_delta_mean_sd(mean: Any, sd: Any, n: Any) -> str:
+    if is_missing(mean):
+        return fillin()
+    mean_str = fmt_signed_int(mean)
+    if is_missing(sd) or is_missing(n) or float(n) < 2:
+        return mean_str
+    return f"{mean_str} $\\pm$ {fmt_int(sd)}"
 
 
 def fmt_mean_sd(mean: Any, sd: Any, n: Any) -> str:
@@ -350,12 +373,34 @@ def _read_foundry_solc_version() -> str:
 # ---------------------------------------------------------------- tab_commit_cost.tex
 
 
-def build_tab_commit_cost(e1: dict[str, dict[str, str]]) -> str:
+def delta_cell_text(commit_cost: dict[str, Any] | None, variant_id: str, n: int) -> str:
+    """ANALYSIS_PLAN.md Amandemen 1: delta(v, n, r) = gas(v, n, r) -
+    gas(baseline, n, r), from stats.json's commit_cost_deltas (computed by
+    analysis/stats.py -- this function only formats, never computes, per
+    this module's own "no computation beyond formatting" rule)."""
+    if variant_id == "baseline":
+        return "--"  # delta vs itself is not a reported quantity
+    if not commit_cost or not commit_cost.get("available"):
+        return fillin()
+    entry = next(
+        (e for e in commit_cost.get("by_n", {}).get(str(n), []) if e.get("variant") == variant_id),
+        None,
+    )
+    if entry is None or not entry.get("available"):
+        return fillin()
+    return fmt_delta_mean_sd(entry.get("mean_delta"), entry.get("sd_delta"), entry.get("n_pairs"))
+
+
+def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, Any] | None) -> str:
     lines = []
     for variant_id, label in COMMIT_VARIANTS:
         n10 = gas_cell_text(e1, f"bench.commit_{variant_id}.n10")
         n100 = gas_cell_text(e1, f"bench.commit_{variant_id}.n100")
         n1000 = gas_cell_text(e1, f"bench.commit_{variant_id}.n1000")
+
+        d10 = delta_cell_text(commit_cost, variant_id, 10)
+        d100 = delta_cell_text(commit_cost, variant_id, 100)
+        d1000 = delta_cell_text(commit_cost, variant_id, 1000)
 
         l1_cell = f"e1.{variant_id}.l1_anchor.n100"
         if variant_id == "baseline" or l1_cell not in e1:
@@ -369,24 +414,30 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]]) -> str:
             tx_n = cell_num(e1, l1_cell, "tx_count_n")
             l1_txs = fmt_int(tx_n)
 
-        lines.append(f"{label} & {n10} & {n100} & {n1000} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\")
+        lines.append(
+            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\"
+        )
 
     body = "\n".join(lines)
+    baseline_variant = (commit_cost or {}).get("baseline_variant", "CommitBaseline")
+    epsilon_pct = (commit_cost or {}).get("epsilon_pct")
+    epsilon_note = f"$\\epsilon={epsilon_pct:g}\\%$ of {latex_escape(baseline_variant)}'s mean gas (paired TOST)" if epsilon_pct is not None else fillin("epsilon")
     return f"""\\begin{{table*}}[!t]
-\\caption{{Block Commitment Cost per Variant: L2 Construction versus L1 Anchoring (mean $\\pm$ SD)}}
+\\caption{{Block Commitment Cost per Variant: L2 Construction, Net of Baseline, and L1 Anchoring (mean $\\pm$ SD)}}
 \\label{{tab:commit-cost}}
 \\centering
 \\footnotesize
 \\setlength{{\\tabcolsep}}{{4pt}}
-\\begin{{tabular}}{{@{{}}lrrrrrr@{{}}}}
+\\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
-\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}
-\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs \\\\
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{\\textbf{{$\\Delta$ vs. baseline}}\\footnotemark}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
+\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
+\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs \\\\
 \\midrule
 {body}
 \\bottomrule
 \\end{{tabular}}
+\\footnotetext{{Paired per (n, repetition, seed): $\\Delta = \\text{{gas}}(\\text{{variant}}) - \\text{{gas}}(\\text{{{latex_escape(baseline_variant)}}})$ at the same n. Absolute gas (left) is descriptive; equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on $\\Delta$, never on absolute gas. {epsilon_note}.}}
 \\end{{table*}}
 """
 
@@ -641,9 +692,11 @@ def main() -> None:
     e2 = load_csv(processed_dir / "e2_sync_gas.csv")
     e3 = load_csv(processed_dir / "e3_throughput.csv")
     e4 = load_csv(processed_dir / "e4_exploits.csv")
+    stats = load_stats_json(data_root, args.run_id)
+    commit_cost_deltas = (stats or {}).get("commit_cost_deltas")
 
     write_tex(out_dir, "tab_params.tex", build_tab_params(data_root, args.run_id))
-    write_tex(out_dir, "tab_commit_cost.tex", build_tab_commit_cost(e1))
+    write_tex(out_dir, "tab_commit_cost.tex", build_tab_commit_cost(e1, commit_cost_deltas))
     write_tex(out_dir, "tab_sys_series.tex", build_tab_sys_series(e1))
     write_tex(out_dir, "tab_decomposition.tex", build_tab_decomposition(e1))
     write_tex(out_dir, "tab_op_gas.tex", build_tab_op_gas(e2))
