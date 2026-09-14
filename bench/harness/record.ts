@@ -4,7 +4,7 @@
  * omitted). env_hash covers tool versions and config so a later reader
  * can tell whether two runs are truly comparable.
  */
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, statSync, writeSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -93,34 +93,52 @@ export function computeEnvHash(repoRoot: string): string {
   return cachedEnvHash;
 }
 
-export class RunIdAlreadyExistsError extends Error {
-  constructor(dir: string) {
-    super(`RUN_ID directory already exists, refusing to write into it: ${dir}`);
-    this.name = "RunIdAlreadyExistsError";
-  }
-}
-
 /**
- * Append-only JSONL writer scoped to one RUN_ID. Refuses to initialize
- * against a RUN_ID whose directory already exists (docs/TICKETS.md T5
- * acceptance criteria: "runner menolak menimpa RUN_ID yang sudah ada") --
- * this check happens once, at construction, not per write() call, so a
- * single campaign process can append many records across its run.
+ * Append-only JSONL writer scoped to one RUN_ID. The RUN_ID directory
+ * itself is expected to pre-exist -- `make freeze` creates it for
+ * manifest.json, and one RUN_ID must hold e1..e4's results together, so
+ * the directory existing is never an error (docs/TICKETS.md pre-freeze
+ * harness fix: the earlier directory-level check was wrong and made the
+ * campaign unrunnable). What IS refused is overwriting an experiment's own
+ * result file: if data/raw/<RUN_ID>/<filename> already exists and is
+ * non-empty, construction refuses to proceed (manifest.json is a sibling
+ * file, never counted as a result). The check-then-create is done with a
+ * single exclusive-create syscall ('ax'), not a separate existsSync() then
+ * write, so two processes racing to create the same new file can't both
+ * succeed -- one gets EEXIST atomically, not a torn/overwritten file.
  */
 export class RecordWriter {
   private readonly filePath: string;
+  private readonly fd: number;
 
   constructor(dataRoot: string, runId: string, filename: string) {
     const dir = path.join(dataRoot, "raw", runId);
-    if (existsSync(dir)) {
-      throw new RunIdAlreadyExistsError(dir);
-    }
     mkdirSync(dir, { recursive: true });
     this.filePath = path.join(dir, filename);
+
+    try {
+      this.fd = openSync(this.filePath, "ax");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+      if (statSync(this.filePath).size > 0) {
+        const experiment = filename.replace(/\.jsonl$/, "");
+        console.error(`FATAL: hasil ${experiment} untuk RUN_ID ini sudah ada; jangan timpa (${this.filePath})`);
+        process.exit(1);
+      }
+
+      // Existing file is present but empty (e.g. a prior process created it
+      // then crashed before its first write) -- safe to reuse.
+      this.fd = openSync(this.filePath, "a");
+    }
   }
 
   write(record: BenchRecord): void {
-    appendFileSync(this.filePath, JSON.stringify(record) + "\n", "utf8");
+    writeSync(this.fd, JSON.stringify(record) + "\n", null, "utf8");
+  }
+
+  close(): void {
+    closeSync(this.fd);
   }
 
   get path(): string {
