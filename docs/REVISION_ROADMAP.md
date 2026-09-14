@@ -35,9 +35,9 @@ Status: **A** = accept (dikerjakan), **P** = partial, **D** = disagree dengan al
 | R1-6, R2-M8, R1-20, R3 | N=10 vs "remains to be fixed". Tidak ada CI | **A + X** | Protokol eksperimen baru: N ≥ 30 per sel, definisi run independen, warm-up, mean/SD/median/p95/CI 95%, failure/retry, uji Welch/Mann-Whitney. Placeholder `\fillin` dihapus dari teks naratif. |
 | R1-7, R2-M7 | Asimetris (ECC deferred vs Merkle inline) → 2×2 | **A + X** | RQ4 = desain faktorial 2×2 (+ keccak-digest sebagai sel kontrol). Klaim "keccak di hot path" dihapus karena gas transfer identik (301.576 vs 301.558). |
 | R1-7 (TPS) | TPS = tx atau operasi logis dalam batch? | **A** | Metrik diganti: *local hot-path UTXO operations/s* (ops/s), terpisah dari *L2 blockchain tx/s*. |
-| R1-8, R3 | 2.000–2.373 TPS bukan throughput sistem. 50–200 TPS tidak diukur | **A** | Estimasi 50–200 TPS dihapus. Opsional: full-pipeline benchmark (`\fillin`, ditandai opsional). |
+| R1-8, R3 | 2.000–2.373 TPS bukan throughput sistem. 50–200 TPS tidak diukur | **A** | Angka lama 2.000–2.373 TPS **DITARIK, tidak berlaku lagi** — akan diukur ulang di kampanye baru. Estimasi 50–200 TPS **dihapus** (tidak pernah benar-benar diukur; tidak digantikan angka baru kecuali benchmark opsional di bawah dijalankan). Opsional: full-pipeline benchmark (`\fillin`, ditandai opsional). |
 | R1-9, R2-m1, m2, R3 | 2.318 vs 2.373, 129–235 vs 125–137 | **A** | Semua angka lama dihapus dari teks. Hasil baru dari satu *frozen dataset*. Tabel dibuat otomatis dari CSV (disarankan script). |
-| R1-10 | 290× harus diframing ulang | **A** | Jadi "biaya menjalankan scalarMul sinkron per transfer" (sel ECC-inline vs ECC-deferred), bukan keunggulan skema. |
+| R1-10 | 290× harus diframing ulang | **A** | Angka lama 290× **DITARIK, tidak berlaku lagi** — akan diukur ulang sebagai kontras ECC-inline vs ECC-deferred, dan diframe ulang jadi "biaya menjalankan scalarMul sinkron per transfer" (sel ECC-inline vs ECC-deferred), bukan keunggulan skema. |
 | R1-13 | Commit hash / release tag | **X** | Data Availability Statement + tag rilis + DOI Zenodo `\fillin`. |
 | R1-17 | Nilai EXIT_PERIOD / CHALLENGE_PERIOD | **X** | Tabel parameter `\fillin`. |
 | R1-18 | Recovery chunked commit | **A** | Dengan 1 scalarMul, chunking tidak diperlukan (dikonfirmasi `\fillin`). Dibahas sebagai kelemahan desain lama. |

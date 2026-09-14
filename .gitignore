@@ -11,9 +11,12 @@ lib/
 # Docs — ignore by default
 docs/*
 
-# Dotenv file(s) -- every .env variant, not just the exact name
+# Dotenv file(s) -- every .env variant, not just the exact name. ".env*"
+# (no dot required after "env") also catches filesystem-copy names like
+# ".env copy" that .env.* alone would miss.
 .env
 .env.*
+.env*
 
 # Markdown — ignore by default, allowlist specific files
 # NOTE: order matters — allowlist entries (!) must come AFTER the last
