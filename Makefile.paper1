@@ -5,6 +5,16 @@ export
 
 RUN_ID ?= $(shell cat $(DATA_ROOT)/LATEST 2>/dev/null)
 
+# analysis/make_figures.py, aggregate.py, and stats.py need numpy/pandas/
+# scipy/statsmodels/matplotlib (analysis/requirements.txt), which do NOT
+# live in the system python3 on an externally-managed (PEP 668)
+# environment like this one -- see README.md's Prerequisites. Prefer the
+# project's own .venv when it exists; fall back to plain python3
+# otherwise (e.g. a CI image that already has these installed globally).
+# make_tables.py itself is stdlib-only and would work with either, but
+# uses the same variable for consistency.
+PYTHON := $(shell test -x .venv/bin/python3 && echo .venv/bin/python3 || echo python3)
+
 .PHONY: p1-help p1-freeze p1-e1 p1-e2 p1-e3 p1-e4 p1-tables p1-verify p1-anvil p1-lock
 
 p1-help:
@@ -38,8 +48,8 @@ p1-lock:
 	chmod -w $(DATA_ROOT)/raw/$(RUN_ID)/*.jsonl
 
 p1-tables:
-	python3 analysis/make_tables.py  --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(TABLES_DIR)
-	python3 analysis/make_figures.py --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(FIGURES_DIR)
+	$(PYTHON) analysis/make_tables.py  --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(TABLES_DIR)
+	$(PYTHON) analysis/make_figures.py --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(FIGURES_DIR)
 
 p1-verify:
-	RUN_ID=$(RUN_ID) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify_paper1.sh
+	RUN_ID=$(RUN_ID) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify.sh
