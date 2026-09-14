@@ -498,11 +498,39 @@ rekonstruksi baru di atas `transferUtxoBatch` yang ada sekarang.
 | Parameter | Nilai | Alasan |
 |---|---|---|
 | K akun pengirim | **≥ 20** (bukan 3) | R3 minta workload representatif |
-| Pola | pasangan pengirim–penerima acak seragam, seed dicatat | menghindari pola sirkular yang tidak realistis |
+| Pola | pasangan pengirim–penerima **permutasi tanpa pengembalian** (satu akun unik per batch dalam satu sel), seed dicatat | lihat catatan di bawah — bukan sekadar pilihan acak dengan pengembalian |
 | B (batch) | 100 | sama dengan kampanye lama, agar bisa dibandingkan |
 | C (konkurensi) | 3 | idem; catat bahwa ini parameter, bukan temuan |
 | W (warm-up) | **3 batch** | buang efek JIT/koneksi |
 | T | 500, 1.000, 1.500, 2.000 | idem kampanye lama |
+
+**Kenapa permutasi tanpa pengembalian, bukan acak dengan pengembalian
+(keputusan desain eksperimen, ditetapkan setelah insiden nyata di T7):**
+penetapan sender-per-batch awalnya acak dengan pengembalian (setiap batch
+independen memilih salah satu dari K akun). Ini membuka peluang (dengan
+K=20 dan 5 batch pada T=500, peluangnya ≈42%) sebuah akun terpilih untuk
+lebih dari satu batch dalam satu sel yang sama. Di bawah konkurensi C>1,
+batch kedua dari akun yang sama bisa mulai terkirim SEBELUM batch pertama
+dari akun itu selesai ditambang, sehingga nonce akun tersebut harus
+diserialisasi. Ini terbukti memicu batch yang macet (satu transaksi
+tersangkut *pending* bermenit-menit, kadang tidak pernah selesai) —
+sebuah pemicu yang **berbeda-beda tiap sel** tergantung akun mana yang
+kebetulan bertabrakan, bukan properti dari sel yang sedang diukur.
+Dengan permutasi tanpa pengembalian, tiap akun mengirim **tepat satu**
+transaksi per sel — nonce-nya diambil sekali (`eth_getTransactionCount`)
+sebelum jendela ukur dan dikirim eksplisit per transaksi, sehingga
+serialisasi nonce per-akun tidak lagi jadi variabel pengganggu sama
+sekali. Konsekuensi: `numBatches` (= T/B) tidak boleh melebihi K — skrip
+gagal keras dengan pesan jelas kalau itu terjadi, bukan diam-diam memakai
+ulang akun.
+
+Setiap batch juga punya batas waktu tunggu keras 60 detik untuk
+menerima receipt (`BATCH_TIMEOUT_MS` di `bench/e3_throughput.ts`), bukan
+mengandalkan polling default viem (pernah teramati menunggu ±6 menit pada
+satu batch yang macet). Kalau batas itu terlampaui, sel dicatat dengan
+tx hash yang tersangkut di `notes` dan lanjut ke batch berikutnya —
+kejadian ini adalah data yang harus dilaporkan, bukan sesuatu yang boleh
+terserap diam-diam ke dalam `duration_ms`.
 
 ### 6.3 Metrik dan definisinya (R1-7)
 
