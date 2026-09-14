@@ -1,0 +1,19 @@
+# analysis/aggregate.py, stats.py, make_tables.py, make_figures.py
+# (docs/TICKETS.md T8) need these. This environment is externally-managed
+# (PEP 668), so set up a venv rather than installing system-wide:
+#
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r analysis/requirements.txt
+#   .venv/bin/python3 analysis/aggregate.py --run-id <RUN_ID> --data data
+#
+# Only the four direct imports are version-pinned deliberately (their
+# transitive deps -- contourpy, cycler, fonttools, kiwisolver, pillow,
+# pyparsing, python-dateutil, six -- are left to pip's resolver); pin all
+# of them here instead if exact reproducibility of a specific run's
+# analysis environment ever matters more than picking up routine patches.
+numpy==2.5.3
+pandas==3.0.5
+scipy==1.18.1
+statsmodels==0.15.0
+matplotlib==3.11.2
+PyYAML==6.0.3

@@ -25,7 +25,7 @@ docs/*
 !docs/TICKETS.md
 !docs/GAP_ANALYSIS.md
 !docs/REVISION_ROADMAP.md
-!docs/ANALYSIS_PLAN.md
+!ANALYSIS_PLAN.md
 !docs/FAILING_TESTS.md
 !docs/ECCMATH_REFACTOR_GAS.md
 
@@ -35,3 +35,6 @@ wallet.txt
 broadcast/
 .env.local
 node_modules/
+.venv/
+__pycache__/
+*.pyc
