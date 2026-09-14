@@ -454,8 +454,40 @@ Angka ini yang menjawab keberatan "premis skaling gugur". Laporkan untuk n = 100
 | Faktor | Level |
 |---|---|
 | Primitive | ASC, Merkle |
-| Placement | inline (update tiap transfer), deferred (update di block boundary) |
+| Placement | inline (update seketika), deferred (update di block boundary) |
 | Kontrol | Keccak digest × deferred |
+
+**Definisi "inline" (wajib, ditetapkan setelah insiden ketidakcocokan
+paritas — lihat di bawah):** *setiap operasi yang membuat state UTXO baru*
+memperbarui digest seketika saat itu juga, **bukan hanya transfer**. Ini
+mencakup baik deposit (`createDepositUtxo`/`createDepositUtxoBatch`)
+maupun output transfer (`_executeBatchOp`/`_createOutputs`). Definisi
+setengah-setengah ("hanya transfer inline, deposit tetap deferred") pernah
+dicoba dan **gagal**: untuk primitive Merkle, root akhir dari incremental
+Merkle tree bergantung pada urutan penyisipan elemen (posisi leaf =
+urutan `push`), sehingga membiarkan deposit tetap deferred sementara
+transfer inline membalik urutan penyisipan [deposit, transfer] menjadi
+[transfer, deposit] dibanding kontrak deferred — root akhirnya berbeda
+di n > 1 (terverifikasi lolos di n=1 secara kebetulan: satu operasi
+*combine* pasangan tetap order-independent, tapi pohon yang lebih dalam
+tidak). ASC tidak menunjukkan masalah ini karena akumulator aditifnya
+(`Σeᵢ·G`) murni komutatif terhadap urutan. Bukti paritas ada di
+`contracts/test/E3PlacementParity.t.sol` (n ∈ {1, 10, 100}, kedua
+primitive) — kalau kontrak inline/deferred manapun diubah di masa depan,
+jalankan ulang test ini sebelum mempercayai hasilnya.
+
+**Kontrak per sel dan provenansinya:**
+
+| Sel | Kontrak | Provenansi |
+|---|---|---|
+| `asc.deferred` | `contracts/src/PlasmaChainUTXO.sol` | sudah ada (measured, IRON RULE 5) |
+| `asc.inline` | `contracts/src/PlasmaChainUTXOInline.sol` | **rekonstruksi** (T7) — bukan vendored; riwayat git (commit `6c48c23`) punya accumulator inline tapi belum punya `transferUtxoBatch` (baru ditambah di `a22095f`, saat mana accumulator sudah dipindah ke deferred) — tidak pernah ada commit dengan keduanya sekaligus |
+| `merkle.deferred` | `contracts/src/PlasmaChainUTXOMerkle.sol` | sudah ada |
+| `merkle.inline` | `contracts/src/PlasmaChainUTXOMerkleInline.sol` | **rekonstruksi** (T7), pola sama dengan `asc.inline` |
+| `keccak.deferred` | `contracts/src/PlasmaChainUTXOKeccak.sol` | **rekonstruksi** (T7) — fork dari jalur deferred `PlasmaChainUTXO.sol`, digest diganti keccak256 hash-chain (pola dari `contracts/src/commit/CommitKeccak.sol`); tidak ada sub-varian inline untuk Keccak |
+
+Tidak ada satu pun sel inline yang vendored dari riwayat git — keduanya
+rekonstruksi baru di atas `transferUtxoBatch` yang ada sekarang.
 
 5 sel × 4 nilai T {500, 1.000, 1.500, 2.000} × N ≥ 30 repetisi = ≥ 600 run. Estimasi durasi: 1 run ≈ 1–3 detik + reset; total sekitar 1–2 jam per kampanye penuh. Bisa ditambah.
 
