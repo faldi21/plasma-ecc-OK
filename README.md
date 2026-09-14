@@ -101,35 +101,23 @@ here.
 
 ## Empirical Results (Paper Tables)
 
-### Table 2 — Membership-Proof Size
+This section intentionally reports no numbers. Paper 1's previous
+measurement campaign was withdrawn for the specifics of why — see
+`docs/REVISION_ROADMAP.md`'s reviewer-response table and
+`docs/EXPERIMENT_PRD.md` §0's "Aturan utama" — and everything is being
+re-measured from one frozen dataset rather than reused or estimated.
 
-| Set size n | 10 | 100 | 500 | 1,000 |
-|---|---|---|---|---|
-| Merkle (bytes) | 128 | 224 | 288 | 320 |
-| **ECC (bytes)** | **64** | **64** | **64** | **64** |
-| **Reduction** | **50.0%** | **71.4%** | **77.8%** | **80.0%** |
-
-All values empirically validated by building actual trees and serializing witnesses.
-
-### Table 3 — Gas Cost per Operation (N=10 runs, mean ± std)
-
-| Operation | Merkle (gas) | ECC Acc. (gas) | Savings |
-|---|---|---|---|
-| Deposit (L1→L2) | 257,614 ± 4 | 240,488 ± 6 | -7.1% |
-| Transfer (L2) | 301,576 ± 8 | 301,558 ± 0 | -0.0% |
-| Withdrawal (L2→L1) | 329,438 ± 8 | 329,439 ± 6 | 0.0% |
-| **Block submission (n=100)** | **8,518,890 ± 96** | **165,253,805 ± 503,899** | **94.8%** |
-
-> Hot-path operations are statistically indistinguishable — deferred-commitment design confirmed.
-
-### Table 4 — Throughput (Peak, T=2000, B=300, C=3)
-
-| T | ECC TPS | ECC Lat | Merkle TPS | Merkle Lat |
-|---|---|---|---|---|
-| 500 | ~4,673 | 143ms | ~4,684 | 142ms |
-| 1,000 | ~4,843 | 138ms | ~4,751 | 140ms |
-| 1,500 | ~4,630 | 144ms | ~4,706 | 142ms |
-| 2,000 | ~4,819 | 138ms | ~4,640 | 143ms |
+Every number in the revised paper's tables and figures is generated
+automatically by `make tables` (`analysis/make_tables.py` +
+`make_figures.py`) from `data/processed/<RUN_ID>/`, which is itself
+produced by `analysis/aggregate.py` + `stats.py` from one frozen
+`data/raw/<RUN_ID>/` — see "Reproducing the Paper 1 Measurement Campaign"
+above for the exact command sequence. The statistical tests, reported
+contrasts, and equivalence margin used are pre-registered in
+[`ANALYSIS_PLAN.md`](ANALYSIS_PLAN.md), frozen before the campaign runs
+(`docs/EXPERIMENT_PRD.md` §7). No results table is hand-maintained in
+this README — until a real campaign has been run and tagged, there is no
+current dataset to summarize here.
 
 ---
 
