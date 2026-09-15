@@ -81,6 +81,8 @@ export interface CampaignConfig {
   repetitions: number;
   warmupBatches: number;
   baseSeed: number;
+  /** --resume: append to an existing result file, skipping (cell, repetition) pairs already in it. */
+  resume?: boolean;
 }
 
 export async function runCampaign(config: CampaignConfig): Promise<RecordWriter> {
@@ -88,7 +90,7 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
   const operatorKey = loadOperatorPrivateKey();
   const { publicClient, operatorWalletClient, operatorAccount } = makeClients(anvilConfig, operatorKey);
 
-  const writer = new RecordWriter(config.dataRoot, config.runId, config.outputFilename);
+  const writer = new RecordWriter(config.dataRoot, config.runId, config.outputFilename, { resume: config.resume });
   const envHash = computeEnvHash(config.repoRoot);
 
   const ctxBase = {
@@ -98,12 +100,21 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
   };
 
   const campaignStartNs = process.hrtime.bigint();
+  let skippedCells = 0;
+  let ranCells = 0;
 
   for (let r = 0; r < config.repetitions; r++) {
     const repSeed = seedFor(config.baseSeed, r);
     const orderedCells = shuffle(config.cells, repSeed);
 
     for (const cell of orderedCells) {
+      // --resume: this (cell, repetition) already has a record on disk.
+      // Skip the work entirely -- never re-run it, never rewrite it.
+      if (config.resume && writer.has(cell.id, r)) {
+        skippedCells += 1;
+        continue;
+      }
+      ranCells += 1;
       beginPhaseCell(`${cell.id} rep=${r}`);
       const snapId = await phase("snapshot", () => snapshot(publicClient));
       try {
@@ -159,6 +170,13 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
         endPhaseCell();
       }
     }
+  }
+
+  if (config.resume) {
+    console.log(
+      `[resume] L2: ${skippedCells} (cell, repetition) sudah ada di ${writer.path} dan dilewati; ${ranCells} dikerjakan sekarang ` +
+        `(${writer.resumedRecordCount} record lama tidak disentuh).`
+    );
   }
 
   printPhaseGrandTotal(Number(process.hrtime.bigint() - campaignStartNs) / 1e6);

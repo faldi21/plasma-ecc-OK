@@ -89,6 +89,7 @@ import { makeClients, loadAnvilConfig, snapshot, revert } from "./harness/anvil.
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor } from "./harness/rng.js";
 import { requireRunId, assertRpcReachable } from "./harness/guards.js";
+import { sendL1WithRetry, L1ConfirmFailedError, MAX_RESENDS, type L1SendOutcome } from "./harness/l1tx.js";
 
 const { ec: EC } = pkg;
 
@@ -110,6 +111,8 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const REPETITIONS = parseInt(parseArg("--repetitions", DRY_RUN ? "1" : "30"), 10);
 const L1_REPETITIONS = parseInt(parseArg("--l1-repetitions", "5"), 10);
 const BASE_SEED = parseInt(parseArg("--seed", "50231145"), 10); // 0x2FE2E29 ("E2" leetish)
+/** --resume: append to an existing result file, skipping (cell_id, repetition) pairs already recorded. */
+const RESUME = process.argv.includes("--resume");
 
 // ---------------------------------------------------------------- Constants
 
@@ -235,9 +238,17 @@ function baseRecord(runId: string, envHash: string, cellId: string, repetition: 
  * measure, and that is documented as a deliberate scope limit (docs/
  * EXPERIMENT_PRD.md §5), not a gap this file is expected to fill.
  */
+let l2Skipped = 0;
+let l2Ran = 0;
+
 async function runL2Campaign(writer: RecordWriter, runId: string, envHash: string): Promise<void> {
   await runL2CampaignForContract(writer, runId, envHash, "asc", "PlasmaChainUTXO.sol/PlasmaChainUTXO.json");
   await runL2CampaignForContract(writer, runId, envHash, "merkle", "PlasmaChainUTXOMerkle.sol/PlasmaChainUTXOMerkle.json");
+  console.log(
+    RESUME
+      ? `[resume] L2: ${l2Skipped} sel sudah ada dan dilewati; ${l2Ran} dikerjakan sekarang.`
+      : `[e2_sync_gas] L2: ${l2Ran} sel dikerjakan.`
+  );
 }
 
 async function runL2CampaignForContract(
@@ -265,12 +276,30 @@ async function runL2CampaignForContract(
 
   for (let r = 0; r < REPETITIONS; r++) {
     const seed = seedFor(BASE_SEED, r);
+
+    // --resume: all four cells of this repetition already recorded ->
+    // skip the whole thing, including its unmeasured setup. A partially
+    // recorded repetition (crash mid-way) still runs, with each finished
+    // cell guarded individually below.
+    const cellIds = ["createDepositUtxo", "transferUtxoBatch"].flatMap((fn) =>
+      ["slot_init", "slot_update"].map((state) => `e2.${primitive}.${fn}.${state}`)
+    );
+    if (RESUME && cellIds.every((id) => writer.has(id, r))) {
+      l2Skipped += cellIds.length;
+      continue;
+    }
+
     const snapId = await snapshot(publicClient);
     try {
       // ---- createDepositUtxo: slot_init then slot_update, two distinct fresh ids ----
       const depositIds = deriveElementIds(seed + 1, 2);
       for (let i = 0; i < 2; i++) {
         const state = i === 0 ? "slot_init" : "slot_update";
+        if (RESUME && writer.has(`e2.${primitive}.createDepositUtxo.${state}`, r)) {
+          l2Skipped += 1;
+          continue;
+        }
+        l2Ran += 1;
         const t0 = process.hrtime.bigint();
         const hash = await operatorWalletClient.writeContract({
           address,
@@ -334,6 +363,11 @@ async function runL2CampaignForContract(
         ["slot_init", initInputs],
         ["slot_update", updateInputs],
       ] as const) {
+        if (RESUME && writer.has(`e2.${primitive}.transferUtxoBatch.${state}`, r)) {
+          l2Skipped += 1;
+          continue;
+        }
+        l2Ran += 1;
         const outputOwners = inputs.map((_, i) => recipients[i % recipients.length].address);
         const outputAmounts = inputs.map(() => 1_000_000_000_000_000_000n);
         const outputCounts = inputs.map(() => 1);
@@ -399,149 +433,188 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
   const rootChain = loadArtifact("RootChainUTXO.sol/RootChainUTXO.json");
   const token = loadArtifact("PlasmaToken.sol/PlasmaToken.json");
 
+  let l1Skipped = 0;
+  let l1Ran = 0;
+
+  /**
+   * Every Sepolia transaction in this phase goes through here: explicit
+   * nonce, a real margin over the current base fee, a 20-minute receipt
+   * budget, and re-send at the same nonce if the transaction is dropped or
+   * stalls (bench/harness/l1tx.ts). Throws L1ConfirmFailedError only after
+   * MAX_RESENDS re-sends have all failed.
+   */
+  const sendTx = (label: string, req: Record<string, unknown>) =>
+    sendL1WithRetry(publicClient as any, walletClient as any, account, label, (ov) =>
+      walletClient.writeContract({ ...(req as any), ...ov, account, chain: sepolia })
+    );
+  const deployTx = (label: string, req: Record<string, unknown>) =>
+    sendL1WithRetry(publicClient as any, walletClient as any, account, label, (ov) =>
+      walletClient.deployContract({ ...(req as any), ...ov, account, chain: sepolia })
+    );
+
   console.log(`[e2_sync_gas] deploying RootChainUTXO + PlasmaToken to Sepolia (operator ${account.address})...`);
-  const rootChainDeployHash = await walletClient.deployContract({
+  const rootChainDeploy = await deployTx("deploy RootChainUTXO", {
     abi: rootChain.abi,
     bytecode: rootChain.bytecode,
     args: [account.address],
-    account,
-    chain: sepolia,
   });
-  const rootChainDeployReceipt = await publicClient.waitForTransactionReceipt({ hash: rootChainDeployHash });
-  const rootChainAddress = rootChainDeployReceipt.contractAddress as Address;
+  const rootChainAddress = rootChainDeploy.receipt.contractAddress as Address;
 
-  const tokenDeployHash = await walletClient.deployContract({
+  const tokenDeploy = await deployTx("deploy PlasmaToken", {
     abi: token.abi,
     bytecode: token.bytecode,
     args: ["E2 Bench Token", "E2BT", 1_000_000_000_000_000_000_000_000n],
-    account,
-    chain: sepolia,
   });
-  const tokenDeployReceipt = await publicClient.waitForTransactionReceipt({ hash: tokenDeployHash });
-  const tokenAddress = tokenDeployReceipt.contractAddress as Address;
+  const tokenAddress = tokenDeploy.receipt.contractAddress as Address;
 
-  const approveHash = await walletClient.writeContract({
+  await sendTx("approve", {
     address: tokenAddress,
     abi: token.abi,
     functionName: "approve",
     args: [rootChainAddress, 1_000_000_000_000_000_000_000_000n],
-    account,
-    chain: sepolia,
   });
-  await publicClient.waitForTransactionReceipt({ hash: approveHash });
 
   // One arbitrary submitted "block" so registerExitUtxo/startExit have a
   // currentPlasmaBlock >= 1 and a blockAccumulator to forge witnesses
   // against. The point itself doesn't need to come from a real L2 block --
   // see this file's docblock on witness forging.
   const arbitraryBlockPoint = { x: GX, y: GY };
-  const submitBlockHash = await walletClient.writeContract({
+  await sendTx("submitBlock (bootstrap)", {
     address: rootChainAddress,
     abi: rootChain.abi,
     functionName: "submitBlock",
     args: [arbitraryBlockPoint, 0n],
-    account,
-    chain: sepolia,
   });
-  await publicClient.waitForTransactionReceipt({ hash: submitBlockHash });
   console.log(`[e2_sync_gas] RootChainUTXO=${rootChainAddress} PlasmaToken=${tokenAddress}, one block submitted`);
 
   async function depositETHFresh(): Promise<Hex> {
-    const hash = await walletClient.writeContract({
+    const { receipt } = await sendTx("depositETH (setup)", {
       address: rootChainAddress,
       abi: rootChain.abi,
       functionName: "depositETH",
-      account,
-      chain: sepolia,
       value: 1_000_000n,
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
     const log = receipt.logs.find((l) => l.address.toLowerCase() === rootChainAddress.toLowerCase());
     return log!.topics[1] as Hex; // DepositCreated(utxoId indexed, ...)
   }
 
+  /**
+   * One measured L1 cell: skip it if --resume already has it, send it
+   * resiliently, and -- if even the re-sends cannot get a receipt -- write
+   * a "timeout" record (gas_used null: nothing was measured, and inventing
+   * a number would be fabrication) and let the campaign carry on with the
+   * next cell instead of dying.
+   */
+  async function measuredL1Cell(opts: {
+    cellId: string;
+    r: number;
+    seed: number;
+    fn: string;
+    nElements: number;
+    notes?: string;
+    req: Record<string, unknown>;
+  }): Promise<L1SendOutcome | null> {
+    if (RESUME && writer.has(opts.cellId, opts.r)) {
+      l1Skipped += 1;
+      return null;
+    }
+    l1Ran += 1;
+    const t0 = process.hrtime.bigint();
+    let outcome;
+    try {
+      outcome = await sendTx(opts.cellId, opts.req);
+    } catch (err) {
+      if (!(err instanceof L1ConfirmFailedError)) throw err;
+      console.warn(`[e2_sync_gas] ${opts.cellId} rep=${opts.r}: ${err.message} -- recording timeout, continuing.`);
+      writer.write({
+        ...baseRecord(runId, envHash, opts.cellId, opts.r, opts.seed, "L1"),
+        duration_ms: 0,
+        function: opts.fn,
+        n_elements: opts.nElements,
+        gas_used: null,
+        tx_count: null,
+        tx_hash: null,
+        status: "timeout",
+        notes: `no receipt after ${MAX_RESENDS} re-send(s) at the same nonce; hashes tried: ${err.hashes.join(", ")}`,
+      });
+      return null;
+    }
+    const t1 = process.hrtime.bigint();
+    writer.write({
+      ...baseRecord(runId, envHash, opts.cellId, opts.r, opts.seed, "L1"),
+      duration_ms: formatDurationMs(t0, t1),
+      function: opts.fn,
+      n_elements: opts.nElements,
+      gas_used: Number(outcome.receipt.gasUsed),
+      tx_count: 1,
+      tx_hash: outcome.receipt.transactionHash,
+      block_number: Number(outcome.receipt.blockNumber),
+      status: outcome.receipt.status === "success" ? "ok" : "error",
+      notes: [opts.notes, outcome.notes].filter(Boolean).join(" | ") || null,
+    });
+    return outcome;
+  }
+
   for (let r = 0; r < L1_REPETITIONS; r++) {
     const seed = seedFor(BASE_SEED, r);
+    try {
 
     // ---- deposit (ERC20): slot_init then slot_update ----
     for (const state of ["slot_init", "slot_update"] as const) {
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "deposit",
-        args: [tokenAddress, 1_000_000n],
-        account,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.deposit.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "deposit",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
+      await measuredL1Cell({
+        cellId: `e2.deposit.${state}`,
+        r,
+        seed,
+        fn: "deposit",
+        nElements: 1,
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "deposit",
+          args: [tokenAddress, 1_000_000n],
+        },
       });
     }
 
     // ---- depositETH: slot_init then slot_update ----
     const depositEthIds: Hex[] = [];
     for (const state of ["slot_init", "slot_update"] as const) {
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "depositETH",
-        account,
-        chain: sepolia,
-        value: 1_000_000n,
+      const outcome = await measuredL1Cell({
+        cellId: `e2.depositETH.${state}`,
+        r,
+        seed,
+        fn: "depositETH",
+        nElements: 1,
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "depositETH",
+          value: 1_000_000n,
+        },
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      const log = receipt.logs.find((l) => l.address.toLowerCase() === rootChainAddress.toLowerCase());
-      depositEthIds.push(log!.topics[1] as Hex);
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.depositETH.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "depositETH",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
-      });
+      // syncUtxoSpent below needs a fresh unspent utxo id. Normally it is
+      // the one this very cell just created (no extra Sepolia traffic);
+      // only when the cell was skipped by --resume, or never got a
+      // receipt, does it cost one additional depositETH.
+      const log = outcome?.receipt.logs.find((l) => l.address.toLowerCase() === rootChainAddress.toLowerCase());
+      depositEthIds.push(log ? (log.topics[1] as Hex) : await depositETHFresh());
     }
 
     // ---- syncUtxoSpent: slot_init then slot_update, on the two depositETH utxos above ----
     for (let i = 0; i < 2; i++) {
       const state = i === 0 ? "slot_init" : "slot_update";
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "syncUtxoSpent",
-        args: [depositEthIds[i], `0x${"11".repeat(32)}` as Hex],
-        account,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.syncUtxoSpent.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "syncUtxoSpent",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
+      await measuredL1Cell({
+        cellId: `e2.syncUtxoSpent.${state}`,
+        r,
+        seed,
+        fn: "syncUtxoSpent",
+        nElements: 1,
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "syncUtxoSpent",
+          args: [depositEthIds[i], `0x${"11".repeat(32)}` as Hex],
+        },
       });
     }
 
@@ -556,28 +629,20 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
         ["slot_update", updateIds],
       ] as const) {
         const txHashes = batchIds.map((_, i) => `0x${i.toString(16).padStart(2, "0").repeat(32)}`.slice(0, 66) as Hex);
-        const t0 = process.hrtime.bigint();
-        const hash = await walletClient.writeContract({
-          address: rootChainAddress,
-          abi: rootChain.abi,
-          functionName: "batchSyncUtxoSpent",
-          args: [batchIds, txHashes],
-          account,
-          chain: sepolia,
-        });
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        const t1 = process.hrtime.bigint();
-        writer.write({
-          ...baseRecord(runId, envHash, `e2.batchSyncUtxoSpent.n${n}.${state}`, r, seed, "L1"),
-          duration_ms: formatDurationMs(t0, t1),
-          function: "batchSyncUtxoSpent",
-          n_elements: n,
-          gas_used: Number(receipt.gasUsed),
-          tx_count: 1,
-          tx_hash: hash,
-          block_number: Number(receipt.blockNumber),
-          status: receipt.status === "success" ? "ok" : "error",
-          notes: "gas_used is for the whole n-UTXO batch tx; per-UTXO cost = gas_used / n_elements (computed downstream, not here).",
+        await measuredL1Cell({
+          cellId: `e2.batchSyncUtxoSpent.n${n}.${state}`,
+          r,
+          seed,
+          fn: "batchSyncUtxoSpent",
+          nElements: n,
+          notes:
+            "gas_used is for the whole n-UTXO batch tx; per-UTXO cost = gas_used / n_elements (computed downstream, not here).",
+          req: {
+            address: rootChainAddress,
+            abi: rootChain.abi,
+            functionName: "batchSyncUtxoSpent",
+            args: [batchIds, txHashes],
+          },
         });
       }
     }
@@ -586,27 +651,18 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
     const updateTargets = [await depositETHFresh(), await depositETHFresh()];
     for (let i = 0; i < 2; i++) {
       const state = i === 0 ? "slot_init" : "slot_update";
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "updateUtxoBlock",
-        args: [updateTargets[i], 1n],
-        account,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.updateUtxoBlock.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "updateUtxoBlock",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
+      await measuredL1Cell({
+        cellId: `e2.updateUtxoBlock.${state}`,
+        r,
+        seed,
+        fn: "updateUtxoBlock",
+        nElements: 1,
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "updateUtxoBlock",
+          args: [updateTargets[i], 1n],
+        },
       });
     }
 
@@ -614,27 +670,18 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
     const exitIds = deriveElementIds(seed + 3, 2);
     for (let i = 0; i < 2; i++) {
       const state = i === 0 ? "slot_init" : "slot_update";
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "registerExitUtxo",
-        args: [exitIds[i], account.address, "0x000000000000000000000000000000000000dEaD", 1_000_000n, 1n],
-        account,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.registerExitUtxo.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "registerExitUtxo",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
+      await measuredL1Cell({
+        cellId: `e2.registerExitUtxo.${state}`,
+        r,
+        seed,
+        fn: "registerExitUtxo",
+        nElements: 1,
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "registerExitUtxo",
+          args: [exitIds[i], account.address, "0x000000000000000000000000000000000000dEaD", 1_000_000n, 1n],
+        },
       });
     }
 
@@ -643,32 +690,39 @@ async function runL1Campaign(writer: RecordWriter, runId: string, envHash: strin
     for (let i = 0; i < 2; i++) {
       const state = i === 0 ? "slot_init" : "slot_update";
       const witness = forgeWitness(arbitraryBlockPoint, startExitTargets[i]);
-      const t0 = process.hrtime.bigint();
-      const hash = await walletClient.writeContract({
-        address: rootChainAddress,
-        abi: rootChain.abi,
-        functionName: "startExit",
-        args: [startExitTargets[i], 1n, witness],
-        account,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const t1 = process.hrtime.bigint();
-      writer.write({
-        ...baseRecord(runId, envHash, `e2.startExit.${state}`, r, seed, "L1"),
-        duration_ms: formatDurationMs(t0, t1),
-        function: "startExit",
-        n_elements: 1,
-        gas_used: Number(receipt.gasUsed),
-        calldata_bytes: null,
-        tx_count: 1,
-        tx_hash: hash,
-        block_number: Number(receipt.blockNumber),
-        status: receipt.status === "success" ? "ok" : "error",
+      await measuredL1Cell({
+        cellId: `e2.startExit.${state}`,
+        r,
+        seed,
+        fn: "startExit",
+        nElements: 1,
         notes: "witness is a forged (non-cryptographic) 64-byte point -- see file docblock.",
+        req: {
+          address: rootChainAddress,
+          abi: rootChain.abi,
+          functionName: "startExit",
+          args: [startExitTargets[i], 1n, witness],
+        },
       });
     }
+
+    } catch (err) {
+      // An unconfirmable SETUP transaction (depositETHFresh and friends --
+      // the measured cells record their own "timeout" and carry on). Losing
+      // this repetition is bad; losing the remaining ones as well is worse.
+      if (!(err instanceof L1ConfirmFailedError)) throw err;
+      console.warn(
+        `[e2_sync_gas] L1 repetition r=${r}: setup transaction never confirmed (${err.message}) -- ` +
+          `skipping the rest of this repetition, continuing with r=${r + 1}.`
+      );
+    }
   }
+
+  console.log(
+    RESUME
+      ? `[resume] L1: ${l1Skipped} sel sudah ada dan dilewati; ${l1Ran} dikerjakan sekarang.`
+      : `[e2_sync_gas] L1: ${l1Ran} sel dikerjakan.`
+  );
 }
 
 // ---------------------------------------------------------------- L1: finalizeExit (local, time-travel)
@@ -793,7 +847,7 @@ async function main(): Promise<void> {
   await assertRpcReachable(loadAnvilConfig().rpcUrl);
 
   mkdirSync(path.join(dataRoot, "raw"), { recursive: true });
-  const writer = new RecordWriter(dataRoot, runId, outputFilename);
+  const writer = new RecordWriter(dataRoot, runId, outputFilename, { resume: RESUME });
   const envHash = computeEnvHash(REPO_ROOT);
 
   console.log(

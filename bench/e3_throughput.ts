@@ -80,6 +80,8 @@ function parseArg(name: string, defaultValue: string): string {
   return process.argv[idx + 1];
 }
 
+/** --resume: append to an existing result file, skipping (cell_id, repetition) pairs already recorded. */
+const RESUME = process.argv.includes("--resume");
 const REPETITIONS = parseInt(parseArg("--repetitions", process.env.N_REPS || "30"), 10);
 const T_VALUES = parseArg("--t-values", "500,1000,1500,2000")
   .split(",")
@@ -477,7 +479,9 @@ async function main(): Promise<void> {
   const anvilConfig = loadAnvilConfig();
   await assertRpcReachable(anvilConfig.rpcUrl);
 
-  const writer = new RecordWriter(dataRoot, runId, outputFilename);
+  const writer = new RecordWriter(dataRoot, runId, outputFilename, { resume: RESUME });
+  let resumeSkipped = 0;
+  let resumeRan = 0;
   const envHash = computeEnvHash(REPO_ROOT);
 
   for (let r = 0; r < REPETITIONS; r++) {
@@ -486,6 +490,13 @@ async function main(): Promise<void> {
 
     for (const { cell, T } of orderedCombos) {
       const cellId = `e3.${cell.id}.T${T}`;
+      // --resume: this (cell, repetition) is already on disk -- skip the
+      // whole run of it, never re-run and never rewrite.
+      if (RESUME && writer.has(cellId, r)) {
+        resumeSkipped += 1;
+        continue;
+      }
+      resumeRan += 1;
       // MUST fold in cell.id, not just T: multiple cells share the same T
       // value (that's the whole point of the factorial design), so
       // seedFor(repSeed, T) alone would derive the IDENTICAL K accounts
@@ -543,6 +554,12 @@ async function main(): Promise<void> {
     }
   }
 
+  if (RESUME) {
+    console.log(
+      `[resume] E3: ${resumeSkipped} sel sudah ada dan dilewati; ${resumeRan} dikerjakan sekarang ` +
+        `(${writer.resumedRecordCount} record lama tidak disentuh).`
+    );
+  }
   console.log(`[e3_throughput] output -> ${writer.path}`);
   const lines = readFileSync(writer.path, "utf8").trim().split("\n");
   console.log(`\n[e3_throughput] sample JSONL lines (${lines.length} total):`);

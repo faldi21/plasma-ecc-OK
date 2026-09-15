@@ -4,7 +4,7 @@
  * omitted). env_hash covers tool versions and config so a later reader
  * can tell whether two runs are truly comparable.
  */
-import { existsSync, mkdirSync, openSync, closeSync, statSync, writeSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, statSync, writeSync, fsyncSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -130,19 +130,45 @@ export function computeEnvHash(repoRoot: string): string {
  * quietly. The seen-hash set is seeded from every sibling *.jsonl already
  * in this RUN_ID's directory at construction time (one RUN_ID holds
  * e1..e4 together), then grows as this writer's own write() calls happen.
+ *
+ * Durability: every write() is a writeSync() followed by an fsyncSync() on
+ * this file's own descriptor, so a finished record is on disk before the
+ * next one is even attempted. Nothing is batched or held until the end of
+ * a phase -- a campaign killed (or a machine lost) mid-phase keeps every
+ * record that had already completed.
+ *
+ * Resume ({ resume: true }): instead of refusing a non-empty result file,
+ * read it, remember which (cell_id, repetition) pairs it already contains,
+ * and open for APPEND. Old records are never rewritten, reordered or
+ * overwritten -- callers ask has() and skip the work that is already done.
  */
+export interface RecordWriterOptions {
+  /** Append to (and skip past) an existing result file instead of refusing it. */
+  resume?: boolean;
+}
+
+/** Identity of one unit of work: a cell measured at one repetition. */
+function completionKey(cellId: string, repetition: number): string {
+  return `${cellId}|${repetition}`;
+}
+
 export class RecordWriter {
   private readonly filePath: string;
   private readonly fd: number;
   private readonly seenL2TxHashes = new Set<string>();
+  private readonly completed = new Set<string>();
+  /** How many records the file already had when this writer opened it (resume only). */
+  readonly resumedRecordCount: number;
 
-  constructor(dataRoot: string, runId: string, filename: string) {
+  constructor(dataRoot: string, runId: string, filename: string, options: RecordWriterOptions = {}) {
     const dir = path.join(dataRoot, "raw", runId);
     mkdirSync(dir, { recursive: true });
     this.filePath = path.join(dir, filename);
 
+    let ownRecordCount = 0;
     for (const sibling of readdirSync(dir)) {
       if (!sibling.endsWith(".jsonl")) continue;
+      const isOwnFile = path.join(dir, sibling) === this.filePath;
       for (const line of readFileSync(path.join(dir, sibling), "utf8").split("\n")) {
         if (!line) continue;
         let rec: Partial<BenchRecord>;
@@ -152,24 +178,38 @@ export class RecordWriter {
           continue; // tolerate a torn last line from a crashed prior process
         }
         if (rec.layer === "L2" && rec.tx_hash) this.seenL2TxHashes.add(rec.tx_hash);
+        if (isOwnFile && rec.cell_id !== undefined && rec.repetition !== undefined) {
+          this.completed.add(completionKey(rec.cell_id, rec.repetition));
+          ownRecordCount += 1;
+        }
       }
     }
+    this.resumedRecordCount = options.resume ? ownRecordCount : 0;
 
     try {
       this.fd = openSync(this.filePath, "ax");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
 
-      if (statSync(this.filePath).size > 0) {
+      if (statSync(this.filePath).size > 0 && !options.resume) {
         const experiment = filename.replace(/\.jsonl$/, "");
-        console.error(`FATAL: hasil ${experiment} untuk RUN_ID ini sudah ada; jangan timpa (${this.filePath})`);
+        console.error(
+          `FATAL: hasil ${experiment} untuk RUN_ID ini sudah ada; jangan timpa (${this.filePath}). ` +
+            `Pakai --resume kalau memang mau melanjutkan run yang terputus.`
+        );
         process.exit(1);
       }
 
-      // Existing file is present but empty (e.g. a prior process created it
-      // then crashed before its first write) -- safe to reuse.
+      // Either an empty leftover file (a prior process created it then
+      // crashed before its first write), or --resume on a real one. Both
+      // open for append; neither rewrites a byte that is already there.
       this.fd = openSync(this.filePath, "a");
     }
+  }
+
+  /** True if this (cell_id, repetition) already has a record in the file (resume). */
+  has(cellId: string, repetition: number): boolean {
+    return this.completed.has(completionKey(cellId, repetition));
   }
 
   write(record: BenchRecord): void {
@@ -186,6 +226,10 @@ export class RecordWriter {
       this.seenL2TxHashes.add(record.tx_hash);
     }
     writeSync(this.fd, JSON.stringify(record) + "\n", null, "utf8");
+    // Durable before the next record is even attempted: a crash, a kill,
+    // or a lost machine keeps everything finished up to this point.
+    fsyncSync(this.fd);
+    this.completed.add(completionKey(record.cell_id, record.repetition));
   }
 
   close(): void {

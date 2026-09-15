@@ -88,6 +88,8 @@ function parseArg(name: string, defaultValue: string): string {
   return process.argv[idx + 1];
 }
 
+/** --resume: append to an existing result file, skipping (cell_id, repetition) pairs already recorded. */
+const RESUME = process.argv.includes("--resume");
 const DRY_RUN = process.argv.includes("--dry-run");
 const REPETITIONS = parseInt(parseArg("--repetitions", DRY_RUN ? "1" : "30"), 10);
 /** Diagnostic-only warm-up override; null means "use the campaign rule" (see runCampaign call in main()). */
@@ -908,6 +910,7 @@ async function main(): Promise<void> {
     // override so the warm-up path can be exercised under --dry-run
     // without sending any L1 traffic; a campaign never passes it.
     warmupBatches: WARMUP_OVERRIDE ?? (DRY_RUN ? 0 : parseInt(process.env.WARMUP_BATCHES || "3", 10)),
+    resume: RESUME,
     baseSeed: BASE_SEED,
   });
 
