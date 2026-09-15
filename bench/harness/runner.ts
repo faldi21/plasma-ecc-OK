@@ -9,6 +9,7 @@ import { makeClients, loadAnvilConfig, snapshot, revert } from "./anvil.js";
 import { loadOperatorPrivateKey } from "./accounts.js";
 import { seedFor, shuffle } from "./rng.js";
 import { RecordWriter, computeEnvHash, formatDurationMs, type BenchRecord } from "./record.js";
+import { beginPhaseCell, endPhaseCell, phase, printPhaseGrandTotal, setPhaseContext } from "./phase_timer.js";
 import type { Hex } from "viem";
 
 export interface CellContext {
@@ -96,23 +97,28 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
     operatorAddress: operatorAccount.address,
   };
 
+  const campaignStartNs = process.hrtime.bigint();
+
   for (let r = 0; r < config.repetitions; r++) {
     const repSeed = seedFor(config.baseSeed, r);
     const orderedCells = shuffle(config.cells, repSeed);
 
     for (const cell of orderedCells) {
-      const snapId = await snapshot(publicClient);
+      beginPhaseCell(`${cell.id} rep=${r}`);
+      const snapId = await phase("snapshot", () => snapshot(publicClient));
       try {
         // Warm-up: run W times, results discarded (not recorded), so the
         // measured run below starts from realistic warm storage-access
         // state rather than a cold, unrepresentative first-touch cost.
         for (let w = 0; w < config.warmupBatches; w++) {
-          await cell.fn({ ...ctxBase, seed: repSeed + 1_000_000 + w });
+          setPhaseContext(`warmup[${w}]`);
+          await phase("cell_fn", () => cell.fn({ ...ctxBase, seed: repSeed + 1_000_000 + w }));
         }
 
+        setPhaseContext("measured");
         const startedAt = new Date().toISOString();
         const t0 = process.hrtime.bigint();
-        const result = await cell.fn({ ...ctxBase, seed: repSeed });
+        const result = await phase("cell_fn", () => cell.fn({ ...ctxBase, seed: repSeed }));
         const t1 = process.hrtime.bigint();
 
         const record: BenchRecord = {
@@ -146,13 +152,16 @@ export async function runCampaign(config: CampaignConfig): Promise<RecordWriter>
           block_gas_limit: result.block_gas_limit ?? null,
           exceeds_mainnet_block_limit: result.exceeds_mainnet_block_limit ?? null,
         };
-        writer.write(record);
+        await phase("write_record", async () => writer.write(record));
       } finally {
-        await revert(publicClient, snapId);
+        setPhaseContext("");
+        await phase("revert", () => revert(publicClient, snapId));
+        endPhaseCell();
       }
     }
   }
 
+  printPhaseGrandTotal(Number(process.hrtime.bigint() - campaignStartNs) / 1e6);
   return writer;
 }
 

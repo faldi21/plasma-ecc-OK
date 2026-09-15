@@ -14,12 +14,20 @@
  * For every cell: setup (deploy + funding) is split into transactions of
  * at most 100 elements each, sized to fit under the block gas limit on
  * its own; the number of setup transactions is recorded via
- * setup_tx_count and is NOT part of the measured window. createBlock()'s
- * gas is estimated first via eth_estimateGas, WITHOUT sending a
- * transaction; if the estimate itself is refused (exceeds the node's
- * configured block gas limit), the cell records
- * status="exceeds_block_gas_limit" and moves on -- the limit is never
- * raised to force a cell through.
+ * setup_tx_count and is NOT part of the measured window. createBlock() is
+ * then sent with an explicit gas limit equal to the node's block gas
+ * limit and its gas read from the receipt -- eth_estimateGas is never
+ * used (it binary-searches by re-executing the call ~50 times, which cost
+ * ~98% of a campaign's wall-clock; see sendMeasuredCreateBlock's
+ * docblock). A cell that cannot fit still records
+ * status="exceeds_block_gas_limit" -- either because the node refuses to
+ * create the transaction, or because it reverts having burned the whole
+ * allowance -- and the limit is never raised to force a cell through.
+ *
+ * --phase-timing prints a per-cell wall-clock breakdown (deploy, setup,
+ * send, receipt-wait, snapshot/revert, per warm-up batch) to stdout; it
+ * never writes to data/raw/. --cells <substr,...> restricts which cells
+ * run, for diagnostics only (a filtered run is never a campaign dataset).
  *
  * L1 anchoring (n=100 only, via RootChainBench.sol on Sepolia) is
  * entirely skipped under plain --dry-run. Its repetition count is
@@ -62,6 +70,7 @@ import { makeClients, loadAnvilConfig, setBalance } from "./harness/anvil.js";
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor } from "./harness/rng.js";
 import { requireRunId, assertRpcReachable } from "./harness/guards.js";
+import { phase } from "./harness/phase_timer.js";
 
 const { ec: EC } = pkg;
 
@@ -81,6 +90,13 @@ function parseArg(name: string, defaultValue: string): string {
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const REPETITIONS = parseInt(parseArg("--repetitions", DRY_RUN ? "1" : "30"), 10);
+/** Diagnostic-only warm-up override; null means "use the campaign rule" (see runCampaign call in main()). */
+const WARMUP_OVERRIDE = process.argv.includes("--warmup") ? parseInt(parseArg("--warmup", "3"), 10) : null;
+/** Diagnostic-only cell filter; see the use site in main() for why a filtered run is never a campaign dataset. */
+const CELLS_FILTER = parseArg("--cells", "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
 const L1_REPETITIONS = parseInt(parseArg("--l1-repetitions", "5"), 10);
 const BASE_SEED = parseInt(parseArg("--seed", "14757395"), 10); // 0xE1E1E1
 
@@ -214,20 +230,34 @@ let txFeeSalt = 0n;
 
 /**
  * Sends the measured createBlock() call for one cell and classifies the
- * outcome (pre-freeze harness fix, CACAT 2/3):
- *  - a genuine node refusal (gas > BLOCK_GAS_LIMIT, from either
- *    eth_estimateGas or the send itself) -> "exceeds_block_gas_limit",
- *    decided ONLY against Anvil's own configured limit (BLOCK_GAS_LIMIT),
- *    never against MAINNET_BLOCK_GAS_LIMIT.
- *  - an RPC timeout (no answer within the transport's timeout, from either
- *    eth_estimateGas or waitForTransactionReceipt) -> "timeout", never
- *    reported as the former and never inferred from it. If
- *    eth_estimateGas itself times out, this still attempts the real send
- *    with an explicit gas limit rather than giving up -- a timeout is not
- *    evidence the gas is too high.
- *  - success -> "ok"/"error" per the receipt, with block_gas_limit and
- *    exceeds_mainnet_block_limit (gas_used > 36,000,000) recorded
- *    alongside gas_used, decoupled from BLOCK_GAS_LIMIT entirely.
+ * outcome.
+ *
+ * eth_estimateGas is deliberately NOT used here (pre-freeze harness fix:
+ * "estimateGas dominates the campaign wall-clock"). Measured with
+ * --phase-timing, estimateContractGas took 143.8s on
+ * sys.plasma_eccmath.n200 against 2.65s for actually sending the same
+ * transaction and reading its receipt -- ~54x, because eth_estimateGas
+ * binary-searches the gas range and re-executes the call on every probe.
+ * It was also paid once per warm-up batch plus once for the measured run
+ * (warmupBatches + 1 = 4 times per cell), which is where ~98% of a
+ * campaign's wall-clock was going. Removing it changes no measurement:
+ * gas_used has always come from the receipt, never from the estimate.
+ *
+ * Outcomes:
+ *  - the node refuses to create the transaction at gas=BLOCK_GAS_LIMIT ->
+ *    "exceeds_block_gas_limit" (this is the node itself saying the call
+ *    cannot fit in one of its blocks).
+ *  - the transaction is mined but reverts having consumed the ENTIRE
+ *    block-gas allowance -> "exceeds_block_gas_limit" too: it ran out of
+ *    gas rather than hitting a contract-level require(). gas_used is left
+ *    null for this case, because BLOCK_GAS_LIMIT is the ceiling it hit,
+ *    not the cost of the operation -- reporting 300,000,000 as the
+ *    measured cost would be a fabricated number (IRON RULE 1).
+ *  - any other revert -> "error", with the receipt's real gas_used.
+ *  - an RPC timeout while waiting for the receipt -> "timeout", never
+ *    conflated with either of the above.
+ *  - success -> "ok", gas_used from the receipt, with block_gas_limit and
+ *    exceeds_mainnet_block_limit (gas_used > 36,000,000) alongside it.
  */
 async function sendMeasuredCreateBlock(
   ctx: CellContext,
@@ -238,59 +268,22 @@ async function sendMeasuredCreateBlock(
   setupTxCount: number,
   n: number
 ): Promise<CellResult> {
-  let estimatedGas: bigint | null = null;
-  try {
-    estimatedGas = await ctx.publicClient.estimateContractGas({
-      address,
-      abi,
-      functionName: "createBlock",
-      args,
-      account: ctx.walletClient.account!,
-    });
-  } catch (err) {
-    if (!(err instanceof TimeoutError)) {
-      return {
-        status: "exceeds_block_gas_limit",
-        n_elements: n,
-        function: "createBlock",
-        setup_tx_count: setupTxCount,
-        block_gas_limit: Number(BLOCK_GAS_LIMIT),
-        notes: `${cellLabel}: eth_estimateGas itself refused (exceeds configured block gas limit ${BLOCK_GAS_LIMIT}); no transaction was sent. Raw: ${String(
-          (err as Error).message
-        ).slice(0, 200)}`,
-        duration_ms: 0,
-      };
-    }
-    // eth_estimateGas timed out -- not evidence either way of whether it
-    // exceeds the block gas limit. Fall through and try the real send.
-  }
-
-  if (estimatedGas !== null && estimatedGas > BLOCK_GAS_LIMIT) {
-    return {
-      status: "exceeds_block_gas_limit",
-      n_elements: n,
-      function: "createBlock",
-      setup_tx_count: setupTxCount,
-      block_gas_limit: Number(BLOCK_GAS_LIMIT),
-      notes: `${cellLabel}: estimated gas ${estimatedGas} > block gas limit ${BLOCK_GAS_LIMIT}; no transaction was sent.`,
-      duration_ms: 0,
-    };
-  }
-
   txFeeSalt += 1n;
   const t0 = process.hrtime.bigint();
   let commitHash: Hex;
   try {
-    commitHash = await ctx.walletClient.writeContract({
-      address,
-      abi,
-      functionName: "createBlock",
-      args,
-      account: ctx.walletClient.account!,
-      chain: ctx.walletClient.chain,
-      gas: BLOCK_GAS_LIMIT,
-      maxPriorityFeePerGas: 1_000_000_000n + txFeeSalt,
-    });
+    commitHash = await phase("send_commit_tx", () =>
+      ctx.walletClient.writeContract({
+        address,
+        abi,
+        functionName: "createBlock",
+        args,
+        account: ctx.walletClient.account!,
+        chain: ctx.walletClient.chain,
+        gas: BLOCK_GAS_LIMIT,
+        maxPriorityFeePerGas: 1_000_000_000n + txFeeSalt,
+      })
+    );
   } catch (err) {
     return {
       status: "exceeds_block_gas_limit",
@@ -298,16 +291,18 @@ async function sendMeasuredCreateBlock(
       function: "createBlock",
       setup_tx_count: setupTxCount,
       block_gas_limit: Number(BLOCK_GAS_LIMIT),
-      notes: `${cellLabel}: node refused the transaction itself (exceeds block gas limit ${BLOCK_GAS_LIMIT})${
-        estimatedGas === null ? " after eth_estimateGas timed out" : ""
-      }. Raw: ${String((err as Error).message).slice(0, 200)}`,
+      notes: `${cellLabel}: node refused to create the transaction at gas=${BLOCK_GAS_LIMIT} (the configured block gas limit); nothing was mined. Raw: ${String(
+        (err as Error).message
+      ).slice(0, 200)}`,
       duration_ms: 0,
     };
   }
 
   let commitReceipt: Awaited<ReturnType<typeof ctx.publicClient.waitForTransactionReceipt>>;
   try {
-    commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
+    commitReceipt = await phase("wait_commit_receipt", () =>
+      ctx.publicClient.waitForTransactionReceipt({ hash: commitHash })
+    );
   } catch (err) {
     if (err instanceof TimeoutError || err instanceof WaitForTransactionReceiptTimeoutError) {
       return {
@@ -327,6 +322,20 @@ async function sendMeasuredCreateBlock(
   }
   const t1 = process.hrtime.bigint();
   const gasUsed = Number(commitReceipt.gasUsed);
+
+  if (commitReceipt.status !== "success" && commitReceipt.gasUsed >= BLOCK_GAS_LIMIT) {
+    return {
+      status: "exceeds_block_gas_limit",
+      n_elements: n,
+      function: "createBlock",
+      setup_tx_count: setupTxCount,
+      block_gas_limit: Number(BLOCK_GAS_LIMIT),
+      tx_hash: commitHash,
+      block_number: Number(commitReceipt.blockNumber),
+      notes: `${cellLabel}: reverted after consuming the entire ${BLOCK_GAS_LIMIT} gas allowance (out of gas, not a contract revert); gas_used left null because that ceiling is not the operation's cost.`,
+      duration_ms: formatDurationMs(t0, t1),
+    };
+  }
 
   return {
     duration_ms: formatDurationMs(t0, t1),
@@ -353,32 +362,36 @@ async function sendMeasuredCreateBlock(
 async function benchCommitCell(ctx: CellContext, variantId: string, contractName: string, n: number): Promise<CellResult> {
   const { abi, bytecode } = loadArtifact(`${contractName}.sol/${contractName}.json`);
 
-  const deployHash = await ctx.walletClient.deployContract({
-    abi,
-    bytecode,
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
+  const address = await phase("deploy", async () => {
+    const deployHash = await ctx.walletClient.deployContract({
+      abi,
+      bytecode,
+      account: ctx.walletClient.account!,
+      chain: ctx.walletClient.chain,
+    });
+    const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
+    return deployReceipt.contractAddress as Address;
   });
-  const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
-  const address = deployReceipt.contractAddress as Address;
 
   const ids = sortedElementIds(deriveElementIds(ctx.seed, n));
   const idChunks = chunk(ids, SETUP_CHUNK_SIZE);
   let setupTxCount = 0;
   for (const idsChunk of idChunks) {
-    const hash = await ctx.walletClient.writeContract({
-      address,
-      abi,
-      functionName: "addPendingBatch",
-      args: [idsChunk],
-      account: ctx.walletClient.account!,
-      chain: ctx.walletClient.chain,
-      gas: 250_000_000n,
+    await phase("setup_chunk", async () => {
+      const hash = await ctx.walletClient.writeContract({
+        address,
+        abi,
+        functionName: "addPendingBatch",
+        args: [idsChunk],
+        account: ctx.walletClient.account!,
+        chain: ctx.walletClient.chain,
+        gas: 250_000_000n,
+      });
+      const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error(`bench.commit_${variantId}.n${n}: setup chunk reverted unexpectedly (tx ${hash})`);
+      }
     });
-    const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") {
-      throw new Error(`bench.commit_${variantId}.n${n}: setup chunk reverted unexpectedly (tx ${hash})`);
-    }
     setupTxCount++;
   }
 
@@ -420,14 +433,16 @@ const SYS_ARTIFACTS: Record<"v0" | "eccmath", string> = {
 async function sysCommitCell(ctx: CellContext, variant: "v0" | "eccmath", n: number): Promise<CellResult> {
   const { abi, bytecode } = loadArtifact(SYS_ARTIFACTS[variant]);
 
-  const deployHash = await ctx.walletClient.deployContract({
-    abi,
-    bytecode,
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
+  const address = await phase("deploy", async () => {
+    const deployHash = await ctx.walletClient.deployContract({
+      abi,
+      bytecode,
+      account: ctx.walletClient.account!,
+      chain: ctx.walletClient.chain,
+    });
+    const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
+    return deployReceipt.contractAddress as Address;
   });
-  const deployReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: deployHash });
-  const address = deployReceipt.contractAddress as Address;
 
   const ids = sortedElementIds(deriveElementIds(ctx.seed, n));
   const users = ids.map((_, i) => `0x${(0x1000 + i).toString(16).padStart(40, "0")}` as Address);
@@ -439,19 +454,21 @@ async function sysCommitCell(ctx: CellContext, variant: "v0" | "eccmath", n: num
   const amountChunks = chunk(amounts, SETUP_CHUNK_SIZE);
   let setupTxCount = 0;
   for (let i = 0; i < idChunks.length; i++) {
-    const hash = await ctx.walletClient.writeContract({
-      address,
-      abi,
-      functionName: "createDepositUtxoBatch",
-      args: [idChunks[i], userChunks[i], token, amountChunks[i]],
-      account: ctx.walletClient.account!,
-      chain: ctx.walletClient.chain,
-      gas: 250_000_000n,
+    await phase("setup_chunk", async () => {
+      const hash = await ctx.walletClient.writeContract({
+        address,
+        abi,
+        functionName: "createDepositUtxoBatch",
+        args: [idChunks[i], userChunks[i], token, amountChunks[i]],
+        account: ctx.walletClient.account!,
+        chain: ctx.walletClient.chain,
+        gas: 250_000_000n,
+      });
+      const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error(`sys.plasma_${variant}.n${n}: setup chunk ${i} reverted unexpectedly (tx ${hash})`);
+      }
     });
-    const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") {
-      throw new Error(`sys.plasma_${variant}.n${n}: setup chunk ${i} reverted unexpectedly (tx ${hash})`);
-    }
     setupTxCount++;
   }
 
@@ -609,14 +626,19 @@ async function deployAndCommitForAnchor(
     createBlockArgs = [claimedPoint.x, claimedPoint.y];
   }
 
-  let estimatedGas: bigint;
+  // Same no-eth_estimateGas rule as sendMeasuredCreateBlock (see its
+  // docblock): send with an explicit gas limit and let the node/receipt
+  // decide, instead of paying a ~50x binary search on every repetition.
+  let commitHash: Hex;
   try {
-    estimatedGas = await ctx.publicClient.estimateContractGas({
+    commitHash = await ctx.walletClient.writeContract({
       address,
       abi,
       functionName: "createBlock",
       args: createBlockArgs,
       account: ctx.walletClient.account!,
+      chain: ctx.walletClient.chain,
+      gas: BLOCK_GAS_LIMIT,
     });
   } catch (err) {
     return {
@@ -627,14 +649,16 @@ async function deployAndCommitForAnchor(
         n_elements: n,
         function: "createBlock",
         setup_tx_count: setupTxCount,
-        notes: `L1-anchor L2 setup for ${variantId} n=${n}: eth_estimateGas itself refused. Raw: ${String(
+        notes: `L1-anchor L2 setup for ${variantId} n=${n}: node refused to create the transaction at gas=${BLOCK_GAS_LIMIT}. Raw: ${String(
           (err as Error).message
         ).slice(0, 200)}`,
         duration_ms: 0,
       },
     };
   }
-  if (estimatedGas > BLOCK_GAS_LIMIT) {
+  const commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
+
+  if (commitReceipt.status !== "success" && commitReceipt.gasUsed >= BLOCK_GAS_LIMIT) {
     return {
       address,
       abi,
@@ -643,22 +667,11 @@ async function deployAndCommitForAnchor(
         n_elements: n,
         function: "createBlock",
         setup_tx_count: setupTxCount,
-        notes: `L1-anchor L2 setup for ${variantId} n=${n}: estimated gas ${estimatedGas} > block gas limit ${BLOCK_GAS_LIMIT}.`,
+        notes: `L1-anchor L2 setup for ${variantId} n=${n}: reverted after consuming the entire ${BLOCK_GAS_LIMIT} gas allowance (out of gas).`,
         duration_ms: 0,
       },
     };
   }
-
-  const commitHash = await ctx.walletClient.writeContract({
-    address,
-    abi,
-    functionName: "createBlock",
-    args: createBlockArgs,
-    account: ctx.walletClient.account!,
-    chain: ctx.walletClient.chain,
-    gas: BLOCK_GAS_LIMIT,
-  });
-  const commitReceipt = await ctx.publicClient.waitForTransactionReceipt({ hash: commitHash });
 
   return {
     address,
@@ -863,8 +876,24 @@ async function main(): Promise<void> {
     }
   }
 
+  // Diagnostic/debug filter only (e.g. --cells sys.plasma_eccmath.n200,
+  // bench.commit_asc_naive.n100). A real campaign never passes it, and it
+  // cannot change what any surviving cell measures -- it only decides
+  // which cells run at all, which is why a filtered run is always a
+  // THROWAWAY RUN_ID, never a campaign dataset.
+  const selected = CELLS_FILTER.length === 0 ? cells : cells.filter((c) => CELLS_FILTER.some((f) => c.id.includes(f)));
+  if (CELLS_FILTER.length > 0) {
+    console.log(
+      `[e1_commit_cost] --cells filter active (${CELLS_FILTER.join(", ")}): ${selected.length}/${cells.length} cells -- DIAGNOSTIC RUN, not a campaign dataset`
+    );
+    if (selected.length === 0) {
+      console.error(`FATAL: --cells matched no cell id. Available: ${cells.map((c) => c.id).join(", ")}`);
+      process.exit(1);
+    }
+  }
+
   console.log(
-    `[e1_commit_cost] run_id=${runId} dry_run=${DRY_RUN} repetitions=${REPETITIONS} l1_repetitions=${L1_REPETITIONS} cells=${cells.length}`
+    `[e1_commit_cost] run_id=${runId} dry_run=${DRY_RUN} repetitions=${REPETITIONS} l1_repetitions=${L1_REPETITIONS} cells=${selected.length}`
   );
 
   const writer = await runCampaign({
@@ -872,9 +901,13 @@ async function main(): Promise<void> {
     dataRoot,
     outputFilename,
     repoRoot: REPO_ROOT,
-    cells,
+    cells: selected,
     repetitions: REPETITIONS,
-    warmupBatches: DRY_RUN ? 0 : parseInt(process.env.WARMUP_BATCHES || "3", 10),
+    // Campaign semantics unchanged: 0 under --dry-run, else
+    // WARMUP_BATCHES (.env.paper1) or 3. --warmup <n> is a diagnostic-only
+    // override so the warm-up path can be exercised under --dry-run
+    // without sending any L1 traffic; a campaign never passes it.
+    warmupBatches: WARMUP_OVERRIDE ?? (DRY_RUN ? 0 : parseInt(process.env.WARMUP_BATCHES || "3", 10)),
     baseSeed: BASE_SEED,
   });
 
