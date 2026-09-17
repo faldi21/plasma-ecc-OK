@@ -26,6 +26,12 @@ PAPER_TEX="${PAPER_TEX:-$PAPER1_DIR/main_rev1.tex}"
 TABLES_DIR="${TABLES_DIR:-$PAPER1_DIR/tables}"
 DATA_ROOT="${DATA_ROOT:-data}"
 RUN_ID="${RUN_ID:-$(cat "$DATA_ROOT/LATEST" 2>/dev/null || true)}"
+# E3 is frozen as its OWN dataset with its own tag (ANALYSIS_PLAN.md
+# Amandemen 2). Defaults to RUN_ID so single-dataset runs behave exactly
+# as before. The two raw directories are checked separately and never
+# merged.
+RUN_ID_E3="${RUN_ID_E3:-$RUN_ID}"
+FREEZE_TAG_E3="${FREEZE_TAG_E3:-}"
 MIN_N="${MIN_N:-30}"          # N minimum per sel (kecuali sel L1)
 MIN_N_L1="${MIN_N_L1:-5}"     # N minimum untuk sel yang mengirim tx L1
 FREEZE_TAG="${FREEZE_TAG:-paper1-rev1-frozen}"
@@ -44,8 +50,16 @@ fi
 RAW="$DATA_ROOT/raw/$RUN_ID"
 PROC="$DATA_ROOT/processed/$RUN_ID"
 RECEIPTS="$DATA_ROOT/receipts/$RUN_ID"
+RAW_E3="$DATA_ROOT/raw/$RUN_ID_E3"
+PROC_E3="$DATA_ROOT/processed/$RUN_ID_E3"
+# Every raw dataset this verification covers, de-duplicated.
+RAW_DIRS=("$RAW")
+[[ "$RUN_ID_E3" != "$RUN_ID" ]] && RAW_DIRS+=("$RAW_E3")
 
 printf '\n\033[1mverify\033[0m  RUN_ID=%s\n  paper: %s\n  data : %s\n' "$RUN_ID" "$PAPER_TEX" "$RAW"
+if [[ "$RUN_ID_E3" != "$RUN_ID" ]]; then
+  printf '  E3   : RUN_ID_E3=%s (dataset terpisah, %s)\n' "$RUN_ID_E3" "$RAW_E3"
+fi
 
 # ---------------------------------------------------------------- D1
 hdr "D1  Semua \\fillin{} sudah terisi"
@@ -103,14 +117,15 @@ fi
 # ---------------------------------------------------------------- D4
 hdr "D4  Data mentah level-run tersedia dan cukup"
 if [[ -d "$RAW" ]]; then
-  files=$(find "$RAW" -name '*.jsonl' | wc -l)
+  files=$(find "${RAW_DIRS[@]}" -name '*.jsonl' 2>/dev/null | wc -l)
   if [[ "$files" -gt 0 ]]; then
-    ok "$files berkas JSONL di $RAW"
-    python3 - "$RAW" "$MIN_N" "$MIN_N_L1" <<'PY'
+    ok "$files berkas JSONL di ${RAW_DIRS[*]}"
+    python3 - "$MIN_N" "$MIN_N_L1" "${RAW_DIRS[@]}" <<'PY'
 import glob, json, sys, collections
-raw, min_n, min_n_l1 = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+min_n, min_n_l1 = int(sys.argv[1]), int(sys.argv[2])
+raw_dirs = sys.argv[3:]
 cells = collections.Counter(); layers = {}; bad = 0
-for path in glob.glob(f"{raw}/*.jsonl"):
+for path in [p for d in raw_dirs for p in glob.glob(f"{d}/*.jsonl")]:
     for ln, line in enumerate(open(path), 1):
         line = line.strip()
         if not line: continue
@@ -143,8 +158,8 @@ PY
     bad "tidak ada berkas JSONL di $RAW"
   fi
   # raw harus read-only setelah kampanye
-  if find "$RAW" -name '*.jsonl' -perm -u+w | grep -q .; then
-    bad "data mentah masih writable — jalankan: chmod -w $RAW/*.jsonl"
+  if find "${RAW_DIRS[@]}" -name '*.jsonl' -perm -u+w 2>/dev/null | grep -q .; then
+    bad "data mentah masih writable — jalankan: chmod -w <dir>/*.jsonl untuk ${RAW_DIRS[*]}"
   else
     ok "data mentah read-only"
   fi
@@ -168,11 +183,12 @@ fi
 # ---------------------------------------------------------------- D6
 hdr "D6  Semua angka L1 punya receipt yang bisa ditelusuri"
 if [[ -d "$RAW" ]]; then
-  python3 - "$RAW" "$RECEIPTS" <<'PY'
+  python3 - "$RECEIPTS" "${RAW_DIRS[@]}" <<'PY'
 import glob, json, os, re, sys
-raw, rcp = sys.argv[1], sys.argv[2]
+rcp = sys.argv[1]
+raw_dirs = sys.argv[2:]
 pat = re.compile(r"^0x[0-9a-fA-F]{64}$"); bad = 0; n = 0
-for path in glob.glob(f"{raw}/*.jsonl"):
+for path in [p for d in raw_dirs for p in glob.glob(f"{d}/*.jsonl")]:
     for ln, line in enumerate(open(path), 1):
         line = line.strip()
         if not line: continue
@@ -210,6 +226,23 @@ if git rev-parse "$FREEZE_TAG" >/dev/null 2>&1; then
     else bad "manifest commit ($man_sha) != tag ($tag_sha) — dataset diukur dari kode lain"; fi
   else
     bad "manifest.json tidak ada di $RAW"
+  fi
+  if [[ "$RUN_ID_E3" != "$RUN_ID" ]]; then
+    if [[ -z "$FREEZE_TAG_E3" ]]; then
+      warn "dataset E3 terpisah ($RUN_ID_E3) tapi FREEZE_TAG_E3 belum diset — tag E3 belum bisa dicek"
+    elif git rev-parse "$FREEZE_TAG_E3" >/dev/null 2>&1; then
+      tag_sha_e3="$(git rev-list -n1 "$FREEZE_TAG_E3")"
+      man_e3="$RAW_E3/manifest.json"
+      if [[ -f "$man_e3" ]]; then
+        man_sha_e3="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("commit",""))' "$man_e3")"
+        if [[ "$man_sha_e3" == "$tag_sha_e3" ]]; then ok "manifest E3 cocok dengan commit $FREEZE_TAG_E3"
+        else bad "manifest E3 ($man_sha_e3) != tag $FREEZE_TAG_E3 ($tag_sha_e3)"; fi
+      else
+        bad "manifest.json tidak ada di $RAW_E3"
+      fi
+    else
+      bad "FREEZE_TAG_E3=$FREEZE_TAG_E3 diset tapi tag-nya tidak ada"
+    fi
   fi
   if git diff --quiet "$FREEZE_TAG" -- contracts/src; then
     ok "contracts/src tidak berubah sejak tag"

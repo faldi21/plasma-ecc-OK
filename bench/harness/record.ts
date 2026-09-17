@@ -23,6 +23,10 @@ import path from "node:path";
  *     (unmeasured) setup phase took -- relevant because setup may need to
  *     be split into multiple transactions to fit under the same block gas
  *     limit that bounds the measured createBlock() call itself.
+ *   - status gains "aborted_memory_guard": E3 stopped ITSELF because the
+ *     Anvil process crossed E3_ANVIL_MAX_RSS_MB, rather than waiting to be
+ *     killed by the kernel (ANALYSIS_PLAN.md Amandemen 2). It marks a run
+ *     that was deliberately NOT measured -- never a measurement.
  *   - test_name / assert_result: for e4.x cells, which Foundry test
  *     function this record is for, and whether its assertions passed --
  *     redundant with cell_id/status by convention, but explicit so a
@@ -50,7 +54,7 @@ export interface BenchRecord {
   ops_failed: number | null;
   ops_retried: number | null;
   latency_ms: number[] | null;
-  status: "ok" | "error" | "exceeds_block_gas_limit" | "timeout" | "pass" | "fail";
+  status: "ok" | "error" | "exceeds_block_gas_limit" | "timeout" | "aborted_memory_guard" | "pass" | "fail";
   notes: string | null;
   env_hash: string;
   setup_tx_count?: number | null;

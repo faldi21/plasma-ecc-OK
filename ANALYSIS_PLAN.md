@@ -176,8 +176,89 @@ commit_cost_equivalence_epsilon_pct: 3.0
 mainnet_block_gas_limit: 36000000
 ```
 
+## Amandemen 2 — E3 dibekukan terpisah, satu Anvil per run
+
+**Tanggal: 2026-09-17.** Ditulis **sebelum** E3 dijalankan ulang, bukan
+sesudah — tidak ada satu pun angka E3 yang dilihat saat menyusun amandemen
+ini. E1, E2, dan E4 sudah selesai dan terkunci; amandemen ini tidak
+menyentuh keduanya.
+
+### Latar
+
+Percobaan E3 pada RUN_ID `20260916-161911-949ccf7` mati di run ke-17 dari
+600. Mesinnya punya 13 GB RAM, dan Anvil dibunuh OOM killer:
+`make: *** [Makefile.paper1:30: p1-anvil] Killed`. Direktori state Anvil
+sempat membengkak sampai ~54 GB di disk.
+
+Penyebabnya struktural, bukan kebetulan: E3 menjalankan 600 run (5 sel ×
+4 nilai T × 30 repetisi), masing-masing sampai 2000 transaksi, **di atas
+satu instance Anvil yang sama**. Rantainya tumbuh monoton sepanjang
+kampanye sampai memori habis.
+
+Bukti degradasinya terlihat di record sebelum mati
+(`data/incidents/e3_partial_oom_0654.jsonl`, 17 record, semuanya
+repetisi 0):
+
+| # | cell | ops_completed | ops_failed | status |
+|---|---|---|---|---|
+| 2 | `e3.asc.deferred.T1000` | 900 | 100 | error |
+| 7 | `e3.keccak.deferred.T1000` | 900 | 100 | error |
+| 16 | `e3.keccak.deferred.T2000` | 1900 | 100 | error |
+| 17 | `e3.merkle.inline.T2000` | 1000 | **1000** | error |
+
+Run ke-17 kehilangan separuh operasinya tepat sebelum node mati.
+
+### Alasan ilmiah
+
+Ukuran rantai adalah **confound**. Dengan satu Anvil untuk 600 run,
+keadaan awal tiap run tidak sama: sel yang kebetulan dijadwalkan belakangan
+diukur di atas rantai yang jauh lebih besar dan node yang jauh lebih
+terbebani. Throughput yang terukur kemudian turun karena **posisi dalam
+antrean**, bukan karena primitif atau penempatan yang sedang dibandingkan —
+persis jenis artefak urutan yang §3.4 sudah berusaha dihapus lewat
+pengacakan urutan sel per repetisi. Pengacakan menyebar confound itu
+merata, tetapi tidak menghilangkannya.
+
+Karena itu setiap run sekarang dijalankan di atas **Anvil baru**: nyalakan
+node, danai akun harness, deploy kontrak, ukur, matikan node, bersihkan
+state-nya. Keadaan awal tiap run jadi identik, dan ukuran rantai berhenti
+menjadi variabel. Jendela yang diukur tidak berubah: tetap hanya operasinya,
+tanpa penyiapan.
+
+Ini menyeragamkan keadaan awal — ia **tidak** mengubah apa yang diukur,
+definisi metrik, rentang T, jumlah repetisi, ambang, atau uji statistik
+mana pun. Bagian 1–5 dan Amandemen 1 di atas berlaku apa adanya untuk E3.
+
+### Konsekuensi: E3 dibekukan terpisah
+
+E3 dijalankan ulang dari nol dengan **RUN_ID dan tag sendiri**, terpisah
+dari `20260916-161911-949ccf7` (tag `paper1-rev1-frozen`) yang memuat E1,
+E2, dan E4. Dua dataset, dua direktori, masing-masing menunjuk commit-nya
+sendiri — sengaja tidak digabung, supaya tiap angka tetap bisa ditelusuri
+ke kode yang benar-benar menghasilkannya.
+
+Pipeline analisis membaca E3 dari RUN_ID terpisah (`RUN_ID_E3` /
+`--run-id-e3` di `analysis/*.py` dan `scripts/verify.sh`).
+
+Alasan pemisahan ini dicatat di sini dan **akan disebut di bagian metode
+paper**: E3 berjalan pada revisi harness yang lebih baru daripada E1/E2/E4,
+dan pembacanya berhak tahu itu beserta alasannya.
+
+### Penegasan
+
+**E1, E2, dan E4 tidak diulang dan tidak diubah.** Datasetnya tetap di
+`data/raw/20260916-161911-949ccf7/`, tetap read-only, tetap menunjuk tag
+`paper1-rev1-frozen`. Perubahan siklus hidup Anvil hanya menyentuh
+`bench/e3_throughput.ts`; tidak ada kontrak, rentang n, jumlah repetisi,
+atau parameter beku yang berubah.
+
 ## Riwayat perubahan
 
+- 2026-09-17: Amandemen 2 ditambahkan — E3 dijalankan ulang dengan satu
+  Anvil per run (menghapus confound ukuran rantai setelah OOM di run ke-17
+  dari 600, mesin 13 GB) dan dibekukan terpisah dengan RUN_ID + tag
+  sendiri. E1, E2, E4 tidak diulang dan tidak diubah. Ditulis sebelum E3
+  dijalankan.
 - 2026-09-15: Amandemen 1 ditambahkan — perbandingan net-of-baseline untuk
   `bench.commit_*` (TOST/Holm/bootstrap atas delta, bukan gas absolut) dan
   ambang kelayakan blok 36.000.000 gas, dipicu temuan struktural dari

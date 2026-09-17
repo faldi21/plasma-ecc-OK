@@ -678,7 +678,12 @@ def build_tab_exploits(e4: dict[str, dict[str, str]]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-id", required=True)
+    ap.add_argument("--run-id", required=True, help="RUN_ID holding E1/E2/E4 (and E3 too, unless --run-id-e3 is given)")
+    ap.add_argument(
+        "--run-id-e3",
+        default=None,
+        help="RUN_ID of the separately frozen E3 dataset (ANALYSIS_PLAN.md Amandemen 2); defaults to --run-id",
+    )
     ap.add_argument("--data", default="data")
     ap.add_argument("--out", required=True)
     ap.add_argument("--throughput-t", type=int, default=2000, help="T value tab_throughput.tex reports (paper default: 2000)")
@@ -686,11 +691,17 @@ def main() -> None:
 
     data_root = Path(args.data)
     out_dir = Path(args.out)
+    run_id_e3 = args.run_id_e3 or args.run_id
     processed_dir = data_root / "processed" / args.run_id
+    # E3's CSV comes from its own frozen dataset when the two differ; the
+    # directories stay separate (ANALYSIS_PLAN.md Amandemen 2).
+    processed_dir_e3 = data_root / "processed" / run_id_e3
+    if run_id_e3 != args.run_id:
+        print(f"[make_tables] E3 dataset is separate: {run_id_e3} (E1/E2/E4: {args.run_id})")
 
     e1 = load_csv(processed_dir / "e1_commit_cost.csv")
     e2 = load_csv(processed_dir / "e2_sync_gas.csv")
-    e3 = load_csv(processed_dir / "e3_throughput.csv")
+    e3 = load_csv(processed_dir_e3 / "e3_throughput.csv")
     e4 = load_csv(processed_dir / "e4_exploits.csv")
     stats = load_stats_json(data_root, args.run_id)
     commit_cost_deltas = (stats or {}).get("commit_cost_deltas")

@@ -4,6 +4,9 @@ include .env.paper1
 export
 
 RUN_ID ?= $(shell cat $(DATA_ROOT)/LATEST 2>/dev/null)
+# E3 dibekukan sebagai dataset sendiri (ANALYSIS_PLAN.md Amandemen 2).
+# Default: sama dengan RUN_ID, jadi alur satu-dataset lama tidak berubah.
+RUN_ID_E3 ?= $(RUN_ID)
 
 # analysis/make_figures.py, aggregate.py, and stats.py need numpy/pandas/
 # scipy/statsmodels/matplotlib (analysis/requirements.txt), which do NOT
@@ -52,8 +55,8 @@ p1-lock:
 	chmod -w $(DATA_ROOT)/raw/$(RUN_ID)/*.jsonl
 
 p1-tables:
-	$(PYTHON) analysis/make_tables.py  --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(TABLES_DIR)
+	$(PYTHON) analysis/make_tables.py  --run-id $(RUN_ID) --run-id-e3 $(RUN_ID_E3) --data $(DATA_ROOT) --out $(TABLES_DIR)
 	$(PYTHON) analysis/make_figures.py --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(FIGURES_DIR)
 
 p1-verify:
-	RUN_ID=$(RUN_ID) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify.sh
+	RUN_ID=$(RUN_ID) RUN_ID_E3=$(RUN_ID_E3) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify.sh

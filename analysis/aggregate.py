@@ -23,7 +23,14 @@ only computation is arithmetic over the input file's own values -- running
 this twice on the same RUN_ID produces byte-identical CSVs.
 
 Usage:
-  python3 analysis/aggregate.py --run-id <RUN_ID> --data data
+  python3 analysis/aggregate.py --run-id <RUN_ID> [--run-id-e3 <RUN_ID_E3>] --data data
+
+Dua RUN_ID (ANALYSIS_PLAN.md Amandemen 2): E1/E2/E4 dan E3 dibekukan
+terpisah, masing-masing menunjuk commit-nya sendiri. --run-id-e3 (atau
+RUN_ID_E3) menunjuk dataset E3; kalau tidak diberikan, nilainya sama
+dengan --run-id, sehingga pemakaian satu-RUN_ID lama tetap jalan persis
+seperti sebelumnya. Kedua dataset TIDAK PERNAH digabung ke satu
+direktori -- yang dibagi hanyalah rujukan, bukan datanya.
 """
 from __future__ import annotations
 
@@ -244,19 +251,14 @@ def write_csv(rows: list[dict[str, Any]], out_path: Path) -> None:
             writer.writerow(row)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-id", required=True)
-    ap.add_argument("--data", default="data")
-    args = ap.parse_args()
-
-    data_root = Path(args.data)
-    jsonl_files = find_run_jsonl_files(data_root, args.run_id)
+def aggregate_one_run(data_root: Path, run_id: str) -> None:
+    """Aggregates one RUN_ID's raw JSONL into its OWN processed directory."""
+    jsonl_files = find_run_jsonl_files(data_root, run_id)
     if not jsonl_files:
-        print(f"[aggregate] no *.jsonl files found under {data_root}/raw/{args.run_id}", file=sys.stderr)
+        print(f"[aggregate] no *.jsonl files found under {data_root}/raw/{run_id}", file=sys.stderr)
         sys.exit(1)
 
-    out_dir = data_root / "processed" / args.run_id
+    out_dir = data_root / "processed" / run_id
     for jsonl_path in jsonl_files:
         records = read_jsonl(jsonl_path)
         aggregator = pick_aggregator(jsonl_path.name)
@@ -271,6 +273,26 @@ def main() -> None:
             by_rep_path = out_dir / "e3_throughput_by_rep.csv"
             write_csv(by_rep_rows, by_rep_path)
             print(f"[aggregate] {jsonl_path.name}: {len(by_rep_rows)} raw ok repetitions -> {by_rep_path} (for stats.py)")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--run-id", required=True)
+    ap.add_argument(
+        "--run-id-e3",
+        default=None,
+        help="RUN_ID of the separately frozen E3 dataset (ANALYSIS_PLAN.md Amandemen 2). "
+        "Aggregated into its own processed/<RUN_ID_E3>/ directory, never merged with --run-id's. "
+        "Defaults to --run-id.",
+    )
+    ap.add_argument("--data", default="data")
+    args = ap.parse_args()
+
+    data_root = Path(args.data)
+    aggregate_one_run(data_root, args.run_id)
+    if args.run_id_e3 and args.run_id_e3 != args.run_id:
+        print(f"[aggregate] E3 dataset is separate: {args.run_id_e3}")
+        aggregate_one_run(data_root, args.run_id_e3)
 
 
 if __name__ == "__main__":

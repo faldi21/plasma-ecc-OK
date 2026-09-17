@@ -64,7 +64,8 @@ import { deriveAccountKey, deriveElementIds, loadOperatorPrivateKey } from "./ha
 import { makeClients, loadAnvilConfig, setBalance } from "./harness/anvil.js";
 import { formatDurationMs, RecordWriter, computeEnvHash, type BenchRecord } from "./harness/record.js";
 import { seedFor, shuffle, mulberry32 } from "./harness/rng.js";
-import { requireRunId, assertRpcReachable } from "./harness/guards.js";
+import { requireRunId } from "./harness/guards.js";
+import { startFreshAnvil, type AnvilHandle } from "./harness/anvil_lifecycle.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -111,6 +112,13 @@ const ASSUMED_SECONDS_PER_BATCH = 2; // rough estimate for the pre-run duration 
 // default polling/timeout, which was observed taking ~6 minutes on a
 // stuck batch (see git history around this constant's introduction).
 const BATCH_TIMEOUT_MS = 60_000;
+// Memory guard (ANALYSIS_PLAN.md Amandemen 2). One fresh Anvil per run
+// means memory cannot accumulate across runs any more, but a single
+// pathological run could still balloon; this stops the campaign with a
+// recorded reason instead of waiting for the OOM killer, which is what
+// truncated the previous attempt's output file mid-write.
+const ANVIL_MAX_RSS_MB = parseInt(process.env.E3_ANVIL_MAX_RSS_MB || "4096", 10);
+const ANVIL_RSS_POLL_MS = 2_000;
 
 interface E3Cell {
   id: string;
@@ -476,13 +484,25 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const anvilConfig = loadAnvilConfig();
-  await assertRpcReachable(anvilConfig.rpcUrl);
+  // One fresh Anvil per run (ANALYSIS_PLAN.md Amandemen 2): no shared
+  // node to reach, so nothing to pre-check here -- startFreshAnvil() below
+  // owns the node's whole lifecycle, including refusing to start if
+  // something else is already listening on the port.
+  const anvilPort = parseInt(process.env.ANVIL_PORT || "8546", 10);
+  const anvilGasLimit = process.env.ANVIL_GAS_LIMIT || "300000000";
+  const anvilFundEth = process.env.ANVIL_FUND_ETH || "10000";
+  // The only account that must exist before the harness runs: the operator
+  // deploys every contract and sends every operator transaction. E3's K
+  // sender accounts are derived per cell and funded inside runE3Cell via
+  // anvil_setBalance, so they are deliberately not pre-funded here.
+  const fundKeys: Hex[] = [loadOperatorPrivateKey()];
 
   const writer = new RecordWriter(dataRoot, runId, outputFilename, { resume: RESUME });
   let resumeSkipped = 0;
   let resumeRan = 0;
   const envHash = computeEnvHash(REPO_ROOT);
+  const overheads: { bootMs: number; fundMs: number; totalMs: number }[] = [];
+  let peakRssOverall = 0;
 
   for (let r = 0; r < REPETITIONS; r++) {
     const repSeed = seedFor(BASE_SEED, r);
@@ -511,10 +531,94 @@ async function main(): Promise<void> {
       const startedAt = new Date().toISOString();
 
       console.log(`[e3_throughput] rep=${r} ${cellId} starting...`);
-      const result = await runE3Cell(anvilConfig, cell, T, cellSeed);
+
+      // --- fresh node for THIS run (Amandemen 2) ---------------------
+      const tRunStart = process.hrtime.bigint();
+      let anvil: AnvilHandle;
+      try {
+        anvil = await startFreshAnvil({
+          port: anvilPort,
+          gasLimit: anvilGasLimit,
+          fundKeys,
+          fundEth: anvilFundEth,
+        });
+      } catch (err) {
+        console.error(`[e3_throughput] FATAL: tidak bisa menyalakan Anvil untuk ${cellId} rep=${r}: ${(err as Error).message}`);
+        process.exit(1);
+      }
+      const anvilConfig = { rpcUrl: anvil.rpcUrl, chainId: 31337 };
+
+      // Sample the node's RSS while the run executes; reading /proc every
+      // couple of seconds cannot perturb the measurement.
+      let guardTripped: { rssMb: number } | null = null;
+      const rssTimer = setInterval(() => {
+        const rss = anvil.rssBytes();
+        if (rss !== null && rss / (1024 * 1024) > ANVIL_MAX_RSS_MB) {
+          guardTripped = { rssMb: rss / (1024 * 1024) };
+        }
+      }, ANVIL_RSS_POLL_MS);
+
+      let result: E3RunResult;
+      try {
+        result = await runE3Cell(anvilConfig, cell, T, cellSeed);
+      } finally {
+        clearInterval(rssTimer);
+      }
+
+      const peakRssMb = anvil.peakRssBytes() / (1024 * 1024);
+      if (peakRssMb > peakRssOverall) peakRssOverall = peakRssMb;
+      await anvil.stop();
+      const runTotalMs = Number(process.hrtime.bigint() - tRunStart) / 1e6;
+      overheads.push({ bootMs: anvil.bootMs, fundMs: anvil.fundMs, totalMs: runTotalMs - result.durationMs });
+
       console.log(
-        `[e3_throughput] rep=${r} ${cellId} done: ops_completed=${result.opsCompleted} ops_failed=${result.opsFailed} ops_retried=${result.opsRetried} duration_ms=${result.durationMs.toFixed(1)}`
+        `[e3_throughput] rep=${r} ${cellId} done: ops_completed=${result.opsCompleted} ops_failed=${result.opsFailed} ops_retried=${result.opsRetried} duration_ms=${result.durationMs.toFixed(1)} ` +
+          `| anvil boot=${anvil.bootMs.toFixed(0)}ms fund=${anvil.fundMs.toFixed(0)}ms overhead=${(runTotalMs - result.durationMs).toFixed(0)}ms peak_rss=${peakRssMb.toFixed(0)}MB`
       );
+
+      // Memory guard: stop on purpose, with a recorded reason, rather than
+      // letting the kernel kill the node mid-write (which is what
+      // truncated the previous attempt's file).
+      if (guardTripped !== null || peakRssMb > ANVIL_MAX_RSS_MB) {
+        const rssMb = guardTripped?.rssMb ?? peakRssMb;
+        writer.write({
+          run_id: runId,
+          cell_id: cellId,
+          repetition: r,
+          seed: cellSeed,
+          started_at: startedAt,
+          duration_ms: 0,
+          layer: "L2",
+          function: "transferUtxoBatch",
+          n_elements: null,
+          gas_used: null,
+          gas_limit: null,
+          calldata_bytes: null,
+          calldata_zero_bytes: null,
+          calldata_nonzero_bytes: null,
+          tx_count: null,
+          tx_hash: null,
+          block_number: null,
+          ops_completed: null,
+          ops_failed: null,
+          ops_retried: null,
+          latency_ms: null,
+          status: "aborted_memory_guard",
+          notes:
+            `anvil RSS ${rssMb.toFixed(0)}MB melewati ambang ${ANVIL_MAX_RSS_MB}MB (E3_ANVIL_MAX_RSS_MB); ` +
+            `kampanye dihentikan sengaja sebelum OOM killer. Pengukuran run ini TIDAK dipakai.`,
+          env_hash: envHash,
+          setup_tx_count: null,
+          test_name: null,
+          assert_result: null,
+        });
+        console.error(
+          `[e3_throughput] BERHENTI: anvil RSS ${rssMb.toFixed(0)}MB > ambang ${ANVIL_MAX_RSS_MB}MB pada ${cellId} rep=${r}. ` +
+            `Record berstatus aborted_memory_guard sudah ditulis; hasil sejauh ini utuh di ${writer.path}. ` +
+            `Lanjutkan dengan --resume setelah penyebabnya jelas.`
+        );
+        process.exit(1);
+      }
 
       const record: BenchRecord = {
         run_id: runId,
@@ -552,6 +656,23 @@ async function main(): Promise<void> {
       };
       writer.write(record);
     }
+  }
+
+  if (overheads.length > 0) {
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    const boot = overheads.map((o) => o.bootMs);
+    const fund = overheads.map((o) => o.fundMs);
+    const total = overheads.map((o) => o.totalMs);
+    const mean = (xs: number[]) => sum(xs) / xs.length;
+    console.log(
+      `[e3_throughput] overhead penyiapan per run (n=${overheads.length}): ` +
+        `anvil boot ${mean(boot).toFixed(0)}ms, pendanaan ${mean(fund).toFixed(0)}ms, ` +
+        `total di luar jendela ukur ${mean(total).toFixed(0)}ms (min ${Math.min(...total).toFixed(0)}, max ${Math.max(...total).toFixed(0)}). ` +
+        `Peak RSS anvil tertinggi: ${peakRssOverall.toFixed(0)}MB (ambang ${ANVIL_MAX_RSS_MB}MB).`
+    );
+    console.log(
+      `[e3_throughput] ekstrapolasi 600 run: overhead ~${((mean(total) * 600) / 60000).toFixed(1)} menit total.`
+    );
   }
 
   if (RESUME) {

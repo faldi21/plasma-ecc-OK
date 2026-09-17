@@ -485,9 +485,15 @@ def run_anova(df: pd.DataFrame, t_value: int, primitives: list[str], placements:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-id", required=True)
+    ap.add_argument("--run-id", required=True, help="RUN_ID holding E1/E2/E4 (and E3 too, unless --run-id-e3 is given)")
+    ap.add_argument(
+        "--run-id-e3",
+        default=None,
+        help="RUN_ID of the separately frozen E3 dataset (ANALYSIS_PLAN.md Amandemen 2); defaults to --run-id",
+    )
     ap.add_argument("--data", default="data")
     args = ap.parse_args()
+    run_id_e3 = args.run_id_e3 or args.run_id
 
     plan = load_analysis_plan(REPO_ROOT)
     alpha = plan["alpha"]
@@ -503,10 +509,16 @@ def main() -> None:
     commit_cost_epsilon_pct = plan.get("commit_cost_equivalence_epsilon_pct")
 
     data_root = Path(args.data)
-    df = load_by_rep(data_root, args.run_id)
+    df = load_by_rep(data_root, run_id_e3)
 
     output: dict[str, Any] = {
         "run_id": args.run_id,
+        # Provenance is explicit: E3 may come from a different frozen
+        # dataset than E1/E2/E4 (ANALYSIS_PLAN.md Amandemen 2). The two
+        # raw datasets stay in separate directories; only this reference
+        # ties them together.
+        "run_id_e3": run_id_e3,
+        "e3_dataset_is_separate": run_id_e3 != args.run_id,
         "analysis_plan_frozen": True,
         "alpha": alpha,
         "epsilon_pct": epsilon_pct,
@@ -530,7 +542,7 @@ def main() -> None:
         )
 
     if df.empty:
-        output["anova"] = {"t_value": anova_t_value, "available": False, "reason_unavailable": "e3_throughput_by_rep.csv is empty (no ok E3 repetitions)"}
+        output["anova"] = {"t_value": anova_t_value, "available": False, "reason_unavailable": f"e3_throughput_by_rep.csv under processed/{run_id_e3} is empty or absent (no ok E3 repetitions)"}
         output["contrasts_by_t"] = {}
         write_output(data_root, args.run_id, output)
         return
