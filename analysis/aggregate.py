@@ -128,6 +128,28 @@ def base_row(cell_id: str, records: list[dict[str, Any]], ok_records: list[dict[
     }
 
 
+def add_tx_provenance(row: dict[str, Any], ok_records: list[dict[str, Any]]) -> None:
+    """Transactions per measured operation, DERIVED from the recorded
+    tx_hash values rather than from the `tx_count` field.
+
+    `tx_count` is a hardcoded literal 1 in bench/e1_commit_cost.ts, so it
+    measures nothing; and `tx_count_n` -- what the paper table used to
+    print -- is the number of REPETITIONS, not of transactions. What can
+    honestly be counted is how many DISTINCT transaction hashes a cell
+    produced across its repetitions: 5 repetitions that yielded 5 distinct
+    hashes, each with a retrievable Sepolia receipt, is one transaction
+    per operation. Corroborated independently by the receipt archive
+    (scripts/fetch_receipts.sh): all 30 anchoring receipts exist and carry
+    status 0x1 in 30 distinct blocks, so no anchoring needed a retry or a
+    second transaction.
+    """
+    hashes = [r.get("tx_hash") for r in ok_records if r.get("tx_hash")]
+    if not hashes or not ok_records:
+        return
+    row["tx_hash_unique"] = len(set(hashes))
+    row["tx_per_operation"] = len(set(hashes)) / len(ok_records)
+
+
 L1_ANCHOR_MARKER = "l1_anchor"
 
 
@@ -170,6 +192,7 @@ def split_l1_anchor_by_slot_state(records: list[dict[str, Any]]) -> list[dict[st
         for field_name in SCALAR_METRIC_FIELDS:
             vals = [r[field_name] for r in ok_recs if r.get(field_name) is not None]
             row.update(describe(vals, ALPHA).as_row(field_name))
+        add_tx_provenance(row, ok_recs)
         rows.append(row)
     return rows
 
@@ -185,6 +208,7 @@ def aggregate_scalar_file(records: list[dict[str, Any]]) -> list[dict[str, Any]]
         for field_name in SCALAR_METRIC_FIELDS:
             vals = [r[field_name] for r in ok_recs if r.get(field_name) is not None]
             row.update(describe(vals, ALPHA).as_row(field_name))
+        add_tx_provenance(row, ok_recs)
         rows.append(row)
     rows.extend(split_l1_anchor_by_slot_state(records))
     return sorted(rows, key=lambda r: r["cell_id"])

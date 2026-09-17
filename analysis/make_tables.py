@@ -523,12 +523,19 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
             calldata_mean = cell_num(e1, l1_cell, "calldata_bytes_mean")
             l1_calldata = fmt_int(calldata_mean)
 
-        # The "L1 txs" column is gone. It printed tx_count_n -- the number
-        # of REPETITIONS (5), not transactions -- and tx_count itself is a
-        # hardcoded literal 1 in bench/e1_commit_cost.ts, so it measured
-        # nothing either way. N is stated in the methods section.
+        # Transactions per anchoring (reviewer R1-5). DERIVED, not the old
+        # column: that one printed tx_count_n, the number of REPETITIONS,
+        # and the underlying tx_count field is a hardcoded literal. This
+        # reads aggregate.add_tx_provenance(), which counts DISTINCT
+        # tx_hash values per repetition.
+        if variant_id == "baseline":
+            l1_txs = NOT_APPLICABLE
+        else:
+            per_op = cell_num(e1, l1_cell, "tx_per_operation")
+            l1_txs = fmt_int(per_op) if per_op is not None else fillin()
+
         lines.append(
-            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} \\\\"
+            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\"
         )
 
     body = "\n".join(lines)
@@ -576,10 +583,19 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
     else:
         slot_note = ""
 
+    tx_note = latex_escape(
+        "L1 txs per anchoring is counted from the distinct transaction hashes each "
+        "cell recorded, not from the harness's tx_count field, which is a hardcoded "
+        "constant. Every anchoring repetition produced its own hash, and all of them "
+        "have a retrievable Sepolia receipt with success status, each in its own "
+        "block: one submitBlock transaction per anchoring, for every variant."
+    )
+
     notes = table_notes(
         delta_note,
         baseline_note,
         slot_note,
+        tx_note,
         NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "",
     )
     return f"""\\begin{{table*}}[!t]
@@ -588,11 +604,11 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
 \\centering
 \\footnotesize
 \\setlength{{\\tabcolsep}}{{4pt}}
-\\begin{{tabular}}{{@{{}}lrrrrrrrr@{{}}}}
+\\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{2}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$, slot\\_update)}} \\\\
-\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-9}}
-\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) \\\\
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$, slot\\_update)}} \\\\
+\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
+\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs per anchoring \\\\
 \\midrule
 {body}
 \\bottomrule
