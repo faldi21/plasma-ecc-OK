@@ -68,7 +68,46 @@ make tables           # analysis/make_tables.py + make_figures.py -> $TABLES_DIR
 
 make verify           # scripts/verify.sh -- checks D1-D7 (docs/EXPERIMENT_PRD.md §0), exits
                       #   non-zero if anything is missing/stale
+
+bash scripts/build_paper.sh   # compile the paper against the IEEE Access template
 ```
+
+#### Compiling the paper (`scripts/build_paper.sh`)
+
+`ieeeaccess.cls` and its Formata/Times Type-1 fonts are **not** part of
+TeX Live, so a plain `pdflatex main_rev1.tex` fails twice over: first on
+the missing document class, then -- once the class is found -- on roughly
+1,100 missing font-metric (`.tfm`) errors.
+
+`scripts/build_paper.sh` fixes both by pointing kpathsea at a template
+directory that lives outside this repo. It installs nothing into the
+system `texmf` tree and copies no template file into the paper
+directory:
+
+| variable | what it resolves |
+|---|---|
+| `TEXINPUTS` | `.cls`, `.sty`, `.fd` |
+| `TFMFONTS` / `TEXFONTS` | `.tfm` font metrics |
+| `T1FONTS` | `.pfb` Type-1 outlines |
+| `BSTINPUTS` / `BIBINPUTS` | bibliography style and database |
+
+Each path ends in `//:` -- recursive search, and the trailing colon keeps
+TeX Live's own tree, so the template directory is *added*, never
+substituted.
+
+```bash
+bash scripts/build_paper.sh                                  # defaults
+IEEE_TEMPLATE_DIR=/path/to/template bash scripts/build_paper.sh
+PAPER_TEX=main_rev2.tex PASSES=4 bash scripts/build_paper.sh
+```
+
+`IEEE_TEMPLATE_DIR` defaults to `/home/faldi/PAPER-S3`. The script exits
+with a clear message if that directory has no `ieeeaccess.cls`, and warns
+(without failing) if the class is present but the Formata metrics are
+not, since pdflatex would otherwise substitute fonts and "succeed" with
+garbled output. It reports the error count, undefined citations/
+references, and the page count from the LaTeX log, and exits non-zero if
+any error occurred or no PDF was produced.
 
 Each script also runs stand-alone with `--run-id`/`--data` flags (see each
 file's own docblock in `bench/` and `analysis/`) if you need to target a

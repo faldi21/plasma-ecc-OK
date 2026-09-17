@@ -108,19 +108,34 @@ def latex_escape(s: Any) -> str:
 # blok").
 EXCEEDS_BLOCK_LIMIT_LABEL = "exceeds block gas limit"
 
+def table_notes(*notes: str) -> str:
+    """Table notes rendered INSIDE the float but OUTSIDE the tabular.
+
+    NOT \\footnote / \\footnotemark / \\footnotetext: LaTeX drops footnotes
+    raised inside a float, so every one of this paper's table notes
+    compiled without error and then silently failed to appear in the PDF
+    (verified by reading main_rev1.pdf back with pdftotext -- 0 hits for
+    all four note texts, including the "correct" \\footnotemark/
+    \\footnotetext pair). These notes carry the paper's honesty caveats
+    (why a cell exceeds the block limit, why finalizeExit was measured off
+    the public network), so losing them is not a cosmetic problem.
+
+    Several notes on one table are joined into ONE paragraph separated by
+    spaces, not stacked as separate blocks."""
+    text = " ".join(n.strip() for n in notes if n and n.strip())
+    if not text:
+        return ""
+    return (
+        "\\vspace{2pt}\n"
+        "{\\footnotesize\\raggedright\n"
+        "\\textit{Note:} " + text + "\\par}"
+    )
+
+
 # Free prose, so it goes through latex_escape() like any other free text --
 # the raw "_" in the PRD path used to reach the .tex unescaped and broke
 # the LaTeX build.
-def tex_footnote(text: str) -> str:
-    """A LaTeX footnote carrying free prose. \\protect is NOT optional:
-    \\footnote is fragile, so an unprotected one inside \\caption{} aborts
-    the build with "Argument of \\@caption has an extra }" -- which is how
-    the two footnotes on the L1 gas table used to break compilation. The
-    text is escaped here, so callers pass plain prose, never markup."""
-    return "\\protect\\footnote{" + latex_escape(text) + "}"
-
-
-FOOTNOTE_EXCEEDS = tex_footnote(
+NOTE_EXCEEDS = latex_escape(
     "Estimated gas for this call exceeded the node's configured block gas limit "
     "before any transaction was sent; the limit is treated as part of the measured "
     "object and was not raised to force the cell through (docs/EXPERIMENT_PRD.md)."
@@ -287,7 +302,7 @@ def cell_status(cells: dict[str, dict[str, str]], cell_id: str) -> str | None:
 def gas_cell_text(cells: dict[str, dict[str, str]], cell_id: str, mean_col="gas_used_mean", sd_col="gas_used_sd", n_col="gas_used_n") -> str:
     status = cell_status(cells, cell_id)
     if status == "exceeds_block_gas_limit":
-        return EXCEEDS_BLOCK_LIMIT_LABEL + FOOTNOTE_EXCEEDS
+        return EXCEEDS_BLOCK_LIMIT_LABEL
     mean = cell_num(cells, cell_id, mean_col)
     sd = cell_num(cells, cell_id, sd_col)
     n = cell_num(cells, cell_id, n_col)
@@ -469,6 +484,18 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
     baseline_variant = (commit_cost or {}).get("baseline_variant", "CommitBaseline")
     epsilon_pct = (commit_cost or {}).get("epsilon_pct")
     epsilon_note = f"$\\epsilon={epsilon_pct:g}\\%$ of {latex_escape(baseline_variant)}'s mean gas (paired TOST)" if epsilon_pct is not None else fillin("epsilon")
+    # This note deliberately keeps its math ($\\Delta$, \\text{}) instead of
+    # being escaped wholesale: the markup is intentional, not data. Every
+    # value that DOES come from data (baseline_variant, epsilon_note) is
+    # escaped at its own source above.
+    delta_note = (
+        "Paired per (n, repetition, seed): "
+        f"$\\Delta = \\text{{gas}}(\\text{{variant}}) - \\text{{gas}}(\\text{{{latex_escape(baseline_variant)}}})$ "
+        "at the same n. Absolute gas (left) is descriptive; "
+        "equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on "
+        f"$\\Delta$, never on absolute gas. {epsilon_note}."
+    )
+    notes = table_notes(delta_note, NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "")
     return f"""\\begin{{table*}}[!t]
 \\caption{{Block Commitment Cost per Variant: L2 Construction, Net of Baseline, and L1 Anchoring (mean $\\pm$ SD)}}
 \\label{{tab:commit-cost}}
@@ -477,14 +504,14 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
 \\setlength{{\\tabcolsep}}{{4pt}}
 \\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}\\footnotemark}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
 \\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
 \\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs \\\\
 \\midrule
 {body}
 \\bottomrule
 \\end{{tabular}}
-\\footnotetext{{Paired per (n, repetition, seed): $\\Delta = \\text{{gas}}(\\text{{variant}}) - \\text{{gas}}(\\text{{{latex_escape(baseline_variant)}}})$ at the same n. Absolute gas (left) is descriptive; equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on $\\Delta$, never on absolute gas. {epsilon_note}.}}
+{notes}
 \\end{{table*}}
 """
 
@@ -514,6 +541,7 @@ def build_tab_sys_series(e1: dict[str, dict[str, str]]) -> str:
         lines.append(f"${n}$ & {v0_text} & {ecc_text} & {diff_text} & {diff_pct_text} \\\\")
 
     body = "\n".join(lines)
+    notes = table_notes(NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "")
     return f"""\\begin{{table}}[!t]
 \\caption{{Complete L2 Contract: As Submitted versus Memory-Optimized, Same Digest (mean $\\pm$ SD)}}
 \\label{{tab:sys-series}}
@@ -526,6 +554,7 @@ $n$ & \\textbf{{As submitted}} & \\textbf{{Memory-optimized}} & \\textbf{{Differ
 {body}
 \\bottomrule
 \\end{{tabular}}
+{notes}
 \\end{{table}}
 """
 
@@ -571,14 +600,14 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
 # measurement, not a fact this script is allowed to assert.
 VENUE_LABELS = {"sepolia": "Sepolia", "local": "local devnet"}
 
-FOOTNOTE_L1_SCOPE = tex_footnote(
+NOTE_L1_SCOPE = latex_escape(
     "The evaluated artifact does not include a Merkle-based RootChain contract, so "
     "L1 cost is reported as an absolute figure for the ASC deployment only, not as "
     "a cross-primitive comparison -- a deliberate scope limit "
     "(docs/EXPERIMENT_PRD.md S5), not an unmeasured gap."
 )
 
-FOOTNOTE_VENUE = tex_footnote(
+NOTE_VENUE = latex_escape(
     "Venue is where the measurement was executed, not which protocol layer the "
     "operation belongs to. All rows are RootChainUTXO.sol (L1) operations, but "
     "finalizeExit was measured on a local devnet because it requires advancing "
@@ -662,6 +691,14 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
                 f"\\texttt{{{fn}}} ({state_label}) & {asc_text} & {venue_text} \\\\"
             )
     block_b_body = "\n".join(block_b_lines)
+    # The exceeds-limit note is emitted only when a cell actually shows
+    # that label, so the table never carries a note about a row it has not
+    # got.
+    block_b_notes = table_notes(
+        NOTE_L1_SCOPE,
+        NOTE_VENUE,
+        NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in block_b_body else "",
+    )
 
     return f"""\\begin{{table*}}[!t]
 \\caption{{Gas per Operation, L2 (Both Systems), slot\\_init versus slot\\_update (mean $\\pm$ SD).{block_a_venue_note}}}
@@ -679,7 +716,7 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
 \\end{{table*}}
 
 \\begin{{table}}[!t]
-\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD){FOOTNOTE_L1_SCOPE}{FOOTNOTE_VENUE}}}
+\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD)}}
 \\label{{tab:op-gas-l1}}
 \\centering
 \\scriptsize
@@ -691,6 +728,7 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
 {block_b_body}
 \\bottomrule
 \\end{{tabular}}
+{block_b_notes}
 \\end{{table}}
 """
 
@@ -705,7 +743,7 @@ def build_tab_throughput(e3: dict[str, dict[str, str]], t_value: int) -> str:
         status = cell_status(e3, cell_id)
         if status == "exceeds_block_gas_limit":
             lines.append(
-                f"{primitive_label} & {placement_label} & \\multicolumn{{4}}{{c}}{{{EXCEEDS_BLOCK_LIMIT_LABEL}}}{FOOTNOTE_EXCEEDS} \\\\"
+                f"{primitive_label} & {placement_label} & \\multicolumn{{4}}{{c}}{{{EXCEEDS_BLOCK_LIMIT_LABEL}}} \\\\"
             )
             continue
 
@@ -734,6 +772,7 @@ def build_tab_throughput(e3: dict[str, dict[str, str]], t_value: int) -> str:
         )
 
     body = "\n".join(lines)
+    notes = table_notes(NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "")
     return f"""\\begin{{table*}}[!t]
 \\caption{{Hot-Path Throughput (ops/s) and Local Confirmation Latency, $2\\times2$ Design Plus Control, $T = {t_value:,}$ (mean [95\\% CI])}}
 \\label{{tab:throughput}}
@@ -747,6 +786,7 @@ def build_tab_throughput(e3: dict[str, dict[str, str]], t_value: int) -> str:
 {body}
 \\bottomrule
 \\end{{tabular}}
+{notes}
 \\end{{table*}}
 """
 
