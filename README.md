@@ -36,6 +36,45 @@ frozen at tag time).
 - Sepolia testnet ETH in the operator account (see "Sepolia ETH needed" below)
 - `.env.paper1` already ships sane defaults (`N_REPS=30`, `ACCOUNTS_K=20`, `BATCH_B=100`, etc. — docs/EXPERIMENT_PRD.md §3-§6) — override there, not inline, so every run's parameters stay traceable to one file
 
+### Regenerating the paper's tables and figures from the frozen data
+
+If you only want to reproduce the published numbers, you do **not** need to
+re-run the campaign, and you do not need Sepolia ETH or `ETH_RPC_URL` — the
+raw measurements and the L1 receipts are already in this archive. Install
+the prerequisites above (Foundry is only needed for `forge test`), then:
+
+```sh
+RUN_ID=20260916-161911-949ccf7 \
+RUN_ID_E3=20260917-091033-d4842b9 \
+make -f Makefile.paper1 p1-tables      # aggregate -> stats -> tables -> figures
+
+RUN_ID=20260916-161911-949ccf7 \
+RUN_ID_E3=20260917-091033-d4842b9 \
+make -f Makefile.paper1 p1-verify      # D1-D7
+```
+
+Running it twice produces byte-identical output: the bootstrap seed is a
+constant frozen in `ANALYSIS_PLAN.md`, not drawn per run.
+
+**Both RUN_IDs are required, and they are different datasets.** This is the
+single most common way to get wrong output:
+
+| tag | RUN_ID | contains |
+|---|---|---|
+| `paper1-rev1-frozen` | `20260916-161911-949ccf7` | E1 (commit cost), E2 (per-operation gas), E4 (exploit tests) |
+| `paper1-rev1-frozen-e3` | `20260917-091033-d4842b9` | E3 (hot-path throughput) only |
+
+E3 was re-run and frozen separately after the original campaign was found to
+share one Anvil instance across all 600 runs, making chain size a confound
+(`ANALYSIS_PLAN.md`, Amendment 2). The two raw directories are never merged.
+`data/LATEST` points at the E3 dataset because it was frozen last, so passing
+only `--run-id` silently uses E3 for **both** roles and every E1/E2 cell comes
+out as `\fillin{}`. Always pass both.
+
+`paper1-rev1-archive` tags this archive: the same contracts and the same raw
+data as the two measurement tags, plus both datasets, both manifests, the
+analysis pipeline, and `ANALYSIS_PLAN.md` with its amendments.
+
 ### Command sequence
 
 ```sh
