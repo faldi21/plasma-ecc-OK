@@ -75,7 +75,15 @@ def num(cells: dict[str, dict[str, str]], cell_id: str, column: str) -> float | 
 
 
 def build_fig_gas_vs_n(e1: dict[str, dict[str, str]], out_path: Path) -> None:
-    ns, v0_means, v0_errs, ecc_means, ecc_errs, diffs, diff_ns = [], [], [], [], [], [], []
+    # Each series carries its OWN x values. They do not always cover the
+    # same n: in the frozen campaign sys.plasma_v0 exceeds the block gas
+    # limit at n=200 while sys.plasma_eccmath still measures fine there.
+    # An earlier version indexed both off one shared `ns` and guarded with
+    # len(ecc_means) == len(ns), so the moment the coverage differed the
+    # memory-optimized series was dropped from the figure silently -- which
+    # is exactly what happened (legend showed 2 entries, x-axis stopped at
+    # n=100 even though eccmath had a point at n=200).
+    ns, v0_means, v0_errs, ecc_ns, ecc_means, ecc_errs, diffs, diff_ns = [], [], [], [], [], [], [], []
     exceeded: list[tuple[int, str]] = []
 
     for n in SYS_N_VALUES:
@@ -93,6 +101,7 @@ def build_fig_gas_vs_n(e1: dict[str, dict[str, str]], out_path: Path) -> None:
             v0_means.append(v0_mean)
             v0_errs.append((num(e1, v0_id, "gas_used_ci95_high") or v0_mean) - v0_mean)
         if ecc_mean is not None:
+            ecc_ns.append(n)
             ecc_means.append(ecc_mean)
             ecc_errs.append((num(e1, ecc_id, "gas_used_ci95_high") or ecc_mean) - ecc_mean)
         if v0_mean is not None and ecc_mean is not None:
@@ -100,10 +109,10 @@ def build_fig_gas_vs_n(e1: dict[str, dict[str, str]], out_path: Path) -> None:
             diffs.append(v0_mean - ecc_mean)
 
     fig, ax1 = plt.subplots(figsize=(6, 4))
-    if ns and len(v0_means) == len(ns):
+    if ns:
         ax1.errorbar(ns, v0_means, yerr=v0_errs, marker="o", label="As submitted (sys.plasma_v0)", color="#1f77b4")
-    if ns and len(ecc_means) == len(ns):
-        ax1.errorbar(ns[: len(ecc_means)], ecc_means, yerr=ecc_errs, marker="s", label="Memory-optimized (sys.plasma_eccmath)", color="#2ca02c")
+    if ecc_ns:
+        ax1.errorbar(ecc_ns, ecc_means, yerr=ecc_errs, marker="s", label="Memory-optimized (sys.plasma_eccmath)", color="#2ca02c")
     ax1.set_xlabel("$n$ (elements committed per block)")
     ax1.set_ylabel("L2 construction gas (createBlock)")
     ax1.ticklabel_format(axis="y", style="plain")
@@ -167,18 +176,33 @@ def build_fig_throughput(e3: dict[str, dict[str, str]], out_path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-id", required=True)
+    ap.add_argument("--run-id", required=True, help="RUN_ID holding E1 (and E3 too, unless --run-id-e3 is given)")
+    ap.add_argument(
+        "--run-id-e3",
+        default=None,
+        help="RUN_ID of the separately frozen E3 dataset (ANALYSIS_PLAN.md Amandemen 2); defaults to --run-id",
+    )
     ap.add_argument("--data", default="data")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    run_id_e3 = args.run_id_e3 or args.run_id
 
     data_root = Path(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     processed_dir = data_root / "processed" / args.run_id
+    # E3 lives in its own frozen dataset when the two differ; the
+    # directories stay separate (ANALYSIS_PLAN.md Amandemen 2).
+    processed_dir_e3 = data_root / "processed" / run_id_e3
+    if run_id_e3 != args.run_id:
+        print(f"[make_figures] E3 dataset is separate: {run_id_e3} (E1: {args.run_id})")
 
     e1 = load_csv(processed_dir / "e1_commit_cost.csv")
-    e3 = load_csv(processed_dir / "e3_throughput.csv")
+    e3 = load_csv(processed_dir_e3 / "e3_throughput.csv")
+    if not e1:
+        print(f"[make_figures] WARNING: no e1_commit_cost.csv under {processed_dir} -- fig_gas_vs_n will be empty")
+    if not e3:
+        print(f"[make_figures] WARNING: no e3_throughput.csv under {processed_dir_e3} -- fig_throughput will be empty")
 
     gas_vs_n_path = out_dir / "fig_gas_vs_n.pdf"
     build_fig_gas_vs_n(e1, gas_vs_n_path)

@@ -54,9 +54,15 @@ p1-e4:
 p1-lock:
 	chmod -w $(DATA_ROOT)/raw/$(RUN_ID)/*.jsonl
 
+# Urutan penuh: tabel dan gambar tidak akan berisi apa pun kalau
+# aggregate/stats belum jalan -- data/processed/ kosong dan tiap sel keluar
+# sebagai \fillin{}. Kedua RUN_ID diteruskan ke setiap tahap yang
+# membutuhkannya (E3 dibekukan terpisah, ANALYSIS_PLAN.md Amandemen 2).
 p1-tables:
+	$(PYTHON) analysis/aggregate.py    --run-id $(RUN_ID) --run-id-e3 $(RUN_ID_E3) --data $(DATA_ROOT)
+	$(PYTHON) analysis/stats.py        --run-id $(RUN_ID) --run-id-e3 $(RUN_ID_E3) --data $(DATA_ROOT)
 	$(PYTHON) analysis/make_tables.py  --run-id $(RUN_ID) --run-id-e3 $(RUN_ID_E3) --data $(DATA_ROOT) --out $(TABLES_DIR)
-	$(PYTHON) analysis/make_figures.py --run-id $(RUN_ID) --data $(DATA_ROOT) --out $(FIGURES_DIR)
+	$(PYTHON) analysis/make_figures.py --run-id $(RUN_ID) --run-id-e3 $(RUN_ID_E3) --data $(DATA_ROOT) --out $(FIGURES_DIR)
 
 p1-verify:
 	RUN_ID=$(RUN_ID) RUN_ID_E3=$(RUN_ID_E3) PAPER1_DIR=$(PAPER1_DIR) DATA_ROOT=$(DATA_ROOT) bash scripts/verify.sh
