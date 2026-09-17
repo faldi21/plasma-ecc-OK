@@ -396,23 +396,24 @@ def build_tab_params(data_root: Path, run_id: str) -> str:
     rows = [
         ("\\texttt{EXIT\\_PERIOD}", exit_period),
         ("\\texttt{CHALLENGE\\_PERIOD}", challenge_period),
-        # Not a measurement and not a configured value: E3 never calls
-        # createBlock at all (bench/e3_throughput.ts), and no interval is
-        # set anywhere in .env.paper1. Saying so is the honest answer; the
-        # paper makes no end-to-end throughput claim that would need one.
-        (
-            "L2 block interval",
-            latex_escape(
-                "not applicable (blocks are created on demand; no fixed interval "
-                "is configured)"
-            ),
-        ),
+        # Not a measurement and not a configured value. The full
+        # explanation lives in the table note instead of in the cell: as a
+        # one-line value it pushed this two-column table 95.9pt past the
+        # text block. The note has room to say more, not less.
+        ("L2 block interval", latex_escape("not applicable")),
         ("L2 Anvil block gas limit", gas_limit_str),
         ("Solidity / optimizer", f"{solc_version}, {via_ir}, {optimizer_runs} runs"),
         ("Evaluated code version", f"{tag_text}, {commit_text}"),
     ]
 
     body = "\n".join(f"{name} & {value} \\\\" for name, value in rows)
+    notes = table_notes(
+        latex_escape(
+            "No L2 block interval is configured. Blocks are created on demand, by an "
+            "explicit createBlock call, and the throughput experiment never calls "
+            "createBlock at all, so no interval influences any figure reported here."
+        )
+    )
     return f"""\\begin{{table}}[!t]
 \\caption{{Protocol and Deployment Parameters Used in All Experiments}}
 \\label{{tab:params}}
@@ -425,6 +426,7 @@ def build_tab_params(data_root: Path, run_id: str) -> str:
 {body}
 \\bottomrule
 \\end{{tabular}}
+{notes}
 \\end{{table}}
 """
 
@@ -654,7 +656,8 @@ def build_tab_sys_series(e1: dict[str, dict[str, str]]) -> str:
 \\caption{{Complete L2 Contract: As Submitted versus Memory-Optimized, Same Digest (mean $\\pm$ SD)}}
 \\label{{tab:sys-series}}
 \\centering
-\\footnotesize
+\\scriptsize
+\\setlength{{\\tabcolsep}}{{2pt}}
 \\begin{{tabular}}{{@{{}}rrrrr@{{}}}}
 \\toprule
 $n$ & \\textbf{{As submitted}} & \\textbf{{Memory-optimized}} & \\textbf{{Difference}} & \\textbf{{Difference \\%}} \\\\
