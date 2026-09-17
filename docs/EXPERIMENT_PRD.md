@@ -132,6 +132,15 @@ Skrip bersifat idempoten (saldo ≥ `ANVIL_FUND_ETH` dilewati), menunggu RPC
 siap dengan polling `eth_blockNumber` (maks. 30 detik, bukan `sleep`), dan
 mematikan Anvil saat Ctrl-C sehingga tidak meninggalkan proses yatim.
 
+**Khusus E3:** sejak ANALYSIS_PLAN.md Amandemen 2, `bench/e3_throughput.ts`
+menyalakan dan mematikan Anvil-nya **sendiri, satu node per run terukur**,
+dengan argumen yang sama persis dan prosedur pendanaan yang sama seperti di
+atas (isolasi state per run lewat `FOUNDRY_HOME` ke direktori sementara,
+bukan lewat flag tambahan). Karena itu `make anvil` **tidak** dipakai saat
+menjalankan E3 — node yang sudah berjalan di port yang sama justru harus
+dihentikan dulu, dan skrip akan menolak start kalau port itu masih terpakai.
+E1 dan E2 tetap memakai `make anvil` seperti biasa.
+
 ---
 
 ## 3. Harness bersama

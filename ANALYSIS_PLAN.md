@@ -252,8 +252,75 @@ dan pembacanya berhak tahu itu beserta alasannya.
 `bench/e3_throughput.ts`; tidak ada kontrak, rentang n, jumlah repetisi,
 atau parameter beku yang berubah.
 
+## Amandemen 3 — flush batch terakhir tiap run
+
+**Tanggal: 2026-09-17.** Ditulis **sebelum** E3 dijalankan, sama seperti
+Amandemen 2. Tidak ada angka E3 yang dilihat saat menyusunnya.
+
+### Cacat
+
+Dengan auto-mine, Anvil memproduksi blok ketika sebuah transaksi **masuk**.
+Batch terakhir tiap run tidak punya transaksi penerus yang bisa menjadi
+pemicu blok, sehingga menggantung sampai `BATCH_TIMEOUT_MS` (60 detik) dan
+tercatat sebagai 100 ops gagal — di setiap run, di setiap sel.
+
+Cacat ini sudah ada sebelumnya tetapi tersamarkan: pada node bersama yang
+lama, trafik penyiapan sel berikutnya kebetulan menjadi pemicu itu.
+Amandemen 2 (satu Anvil per run) menghapus penyamaran tersebut, sehingga
+cacatnya muncul di setiap run.
+
+### Bukti
+
+Diambil langsung dari node saat sebuah batch menggantung:
+
+| Pengamatan | Nilai | Artinya |
+|---|---|---|
+| status tx | `pending`, nonce 0 | diterima node, bukan nonce gap |
+| gas limit tx | 280.000.000 | = `TRANSFER_BATCH_GAS` |
+| block gas limit | 300.000.000 (konstan tiap blok) | dua tx 280M tidak muat dalam satu blok |
+| base fee | turun, 1,0 → 0,167 gwei | **bukan** underpricing |
+| produksi blok | berhenti total selama tx menunggu | tidak ada pemicu berikutnya |
+
+### Perbaikan
+
+Satu pemicu mine eksplisit (`evm_mine`) segera setelah batch terakhir
+sebuah run **dikirim**. Aturannya seragam dan tanpa kekecualian:
+
+- identik untuk **semua sel dan semua nilai T** — dipicu ketika jumlah
+  transaksi terkirim mencapai `numBatches`, bukan berdasarkan sel, T, atau
+  indeks batch tertentu;
+- **tepat satu kali per run**, tidak pernah diulang. Kalau setelah flush
+  masih ada ops yang gagal, itu dicatat apa adanya sebagai `ops_failed` —
+  tidak ditambal dengan flush berulang;
+- **jendela ukur tidak berubah**: tetap "batch pertama dikirim → receipt
+  batch terakhir diterima". Flush terjadi di dalam jendela itu, sama
+  seperti penantian receipt batch mana pun; jendela tidak dipotong maupun
+  diperpanjang khusus untuk batch terakhir.
+
+### Yang TIDAK diubah
+
+`TRANSFER_BATCH_GAS` tetap **280.000.000**. Nilai itu sama untuk semua
+sel, jadi ia tidak membiaskan perbandingan antarvarian; menurunkannya
+setelah melihat hasil adalah penyetelan parameter pasca-hoc dan tidak bisa
+dipertahankan. Rentang T, jumlah repetisi, K, B, C, W, ambang, dan seluruh
+uji statistik juga tidak berubah.
+
+### Catatan jujur untuk bagian metode
+
+Karena gas limit per transaksi (280.000.000) jauh di atas kebutuhan nyata
+sebuah batch (**~28,5 juta**, terukur dari `gasUsed` blok), **hanya satu
+batch yang muat per blok**. Konsekuensinya, konkurensi C=3 tidak berarti
+tiga batch diproses dalam satu blok: node tetap memprosesnya satu per
+blok. Ini **dinyatakan sebagai konfigurasi pengukuran di bagian metode
+paper**, bukan disembunyikan — angka throughput E3 harus dibaca sebagai
+throughput di bawah konfigurasi ini, bukan sebagai batas atas sistem.
+
 ## Riwayat perubahan
 
+- 2026-09-17: Amandemen 3 ditambahkan — flush eksplisit satu kali setelah
+  batch terakhir tiap run (cacat auto-mine tanpa transaksi penerus),
+  seragam di semua sel dan nilai T. `TRANSFER_BATCH_GAS` sengaja tidak
+  diubah. Ditulis sebelum E3 dijalankan.
 - 2026-09-17: Amandemen 2 ditambahkan — E3 dijalankan ulang dengan satu
   Anvil per run (menghapus confound ukuran rantai setelah OOM di run ke-17
   dari 600, mesin 13 GB) dan dibekukan terpisah dengan RUN_ID + tag

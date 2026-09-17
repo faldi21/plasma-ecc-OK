@@ -337,6 +337,25 @@ async function runE3Cell(
    * show up as data (status="batch_timeout" + tx_hash in the run's notes),
    * never get silently absorbed into duration_ms.
    */
+  // Explicit flush of the final batch (ANALYSIS_PLAN.md Amandemen 3).
+  // Anvil auto-mines when a transaction ARRIVES, and two transactions
+  // carrying TRANSFER_BATCH_GAS (280M) cannot share a 300M block, so a
+  // transaction that does not fit waits for the next arrival to trigger a
+  // block. The last batch of a run has no successor, so it used to hang
+  // until BATCH_TIMEOUT_MS and be recorded as B failed ops -- in every
+  // run, on every cell. One evm_mine is fired the moment the final batch
+  // has been submitted: identical for every cell and every T, exactly
+  // once per run, never repeated. If ops still fail after it, they are
+  // recorded as ops_failed exactly as they happen.
+  let submittedCount = 0;
+  let flushed = false;
+  async function flushIfAllSubmitted(): Promise<void> {
+    submittedCount += 1;
+    if (flushed || submittedCount < numBatches) return;
+    flushed = true;
+    await publicClient.request({ method: "evm_mine" as any, params: [] as any });
+  }
+
   async function sendBatch(b: number): Promise<{ status: "ok" | "failed" | "batch_timeout"; hash: Hex; gasUsed?: bigint }> {
     const senderClient = accountClients[batchSenderIdx[b]];
     const inputs = batchInputIds[b].map((id) => `0x${id.toString(16).padStart(64, "0")}` as Hex);
@@ -353,6 +372,9 @@ async function runE3Cell(
       gas: TRANSFER_BATCH_GAS,
       nonce: batchSenderNonce[b],
     });
+    // Submitted. If this was the last batch of the run, nudge the node
+    // once so nothing is left waiting for a trigger that will never come.
+    await flushIfAllSubmitted();
 
     const receiptPromise = publicClient.waitForTransactionReceipt({ hash });
     const timeoutPromise = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), BATCH_TIMEOUT_MS));
