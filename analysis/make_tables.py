@@ -945,30 +945,64 @@ def build_tab_throughput(e3: dict[str, dict[str, str]], t_value: int) -> str:
 # ---------------------------------------------------------------- tab_exploits.tex
 
 
+def texttt_breakable(text: str) -> str:
+    """A \\texttt{} whose underscores are line-break opportunities.
+
+    Foundry test names run to ~50 characters and \\texttt has no natural
+    breakpoints, so an unbroken name shoots straight out of its p{} cell
+    however wide the column is -- that, not the column budget alone, is
+    what pushed tab_exploits 135pt past the text block and cut the Gas and
+    Notes columns off the page. \\allowbreak after each escaped underscore
+    lets the name wrap between its parts.
+
+    The name itself is NEVER shortened or abbreviated: the paper cites
+    these identifiers verbatim and a reader must be able to grep the repo
+    for them. \\allowbreak adds a breakpoint without adding a character --
+    the text extracted from the PDF is still the exact test name.
+    """
+    escaped = latex_escape(text).replace("\\_", "\\_\\allowbreak ")
+    # Also break at camelCase boundaries: "ArbitraryChallengeCancelsHonest
+    # Exit" is 35 characters with no underscore in it, wider on its own
+    # than any column this paper has. \\allowbreak is a breakpoint, not a
+    # character, so the name is still byte-for-byte the identifier in the
+    # repo -- it may simply wrap across two lines when rendered.
+    return "\\texttt{" + re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "\\\\allowbreak ", escaped) + "}"
+
+
 def build_tab_exploits(e4: dict[str, dict[str, str]]) -> str:
     lines = []
+    note_items = []
     for cell_id, row in sorted(e4.items()):
         test_name = row.get("test_name") or cell_id
         status = latex_escape(row.get("primary_status")) or fillin()
         gas_mean = cell_num(e4, cell_id, "gas_used_mean")
         gas_text = fmt_int(gas_mean)
-        notes = latex_escape(row.get("notes", ""))
-        lines.append(f"\\texttt{{{latex_escape(test_name)}}} & {status} & {gas_text} & {notes} \\\\")
+        lines.append(f"{texttt_breakable(test_name)} & {status} & {gas_text} \\\\")
+        # The Notes column is gone from the tabular: three p{} columns plus
+        # a gas column need 296pt in a 242.67pt text column, so something
+        # had to leave. Per-row notes become a note paragraph below the
+        # tabular, each still bound to its own test by name, so no evidence
+        # is lost -- only relocated to where it actually prints.
+        note = (row.get("notes") or "").strip()
+        if note:
+            note_items.append(f"{texttt_breakable(test_name)}: {latex_escape(note)}.")
 
-    body = "\n".join(lines) if lines else f"\\multicolumn{{4}}{{c}}{{{fillin('no E4 data')}}} \\\\"
+    body = "\n".join(lines) if lines else f"\\multicolumn{{3}}{{c}}{{{fillin('no E4 data')}}} \\\\"
+    notes = table_notes(*note_items)
     return f"""\\begin{{table}}[!t]
 \\caption{{Exploit and Property Test Cases Against the Evaluated Contracts}}
 \\label{{tab:exploits}}
 \\centering
-\\footnotesize
-\\setlength{{\\tabcolsep}}{{3pt}}
-\\begin{{tabular}}{{@{{}}p{{3.2cm}}p{{1.3cm}}rp{{4cm}}@{{}}}}
+\\scriptsize
+\\setlength{{\\tabcolsep}}{{2pt}}
+\\begin{{tabular}}{{@{{}}p{{5.2cm}}lr@{{}}}}
 \\toprule
-\\textbf{{Test}} & \\textbf{{Status}} & \\textbf{{Gas}} & \\textbf{{Notes}} \\\\
+\\textbf{{Test}} & \\textbf{{Status}} & \\textbf{{Gas}} \\\\
 \\midrule
 {body}
 \\bottomrule
 \\end{{tabular}}
+{notes}
 \\end{{table}}
 """
 
