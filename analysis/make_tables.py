@@ -574,6 +574,42 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
         prev_group = group
 
     body = "\n".join(lines)
+
+    # The ladder spans TWO measurement contexts and must say so: rows 1-2
+    # are the full contract ("sys"), rows 3-7 the isolated commitment
+    # harness ("bench"). Every number here is read from the same CSV the
+    # table body uses -- none of it is written by hand, and the contexts
+    # are never pooled.
+    sys_opt = cell_num(e1, "sys.plasma_eccmath.n100", "gas_used_mean")
+    bench_naive = cell_num(e1, "bench.commit_asc_naive.n100", "gas_used_mean")
+    bench_base = cell_num(e1, "bench.commit_baseline.n100", "gas_used_mean")
+    if sys_opt is not None and bench_naive is not None:
+        overhead = sys_opt - bench_naive
+        context_note = latex_escape(
+            "The first two rows were measured on the complete L2 contract; the "
+            "remaining rows were measured on the isolated commitment harness. The "
+            "two are not pooled. The harness counterpart of the "
+            f"{fmt_int(sys_opt)} gas memory-optimized row is {fmt_int(bench_naive)} "
+            f"gas, so the boundary between the two contexts costs {fmt_int(overhead)} "
+            "gas"
+            + (
+                f", which is the full contract's own baseline overhead: the harness "
+                f"commits an empty block for {fmt_int(bench_base)} gas at the same n."
+                if bench_base is not None
+                else "."
+            )
+            + " The ladder is still readable as a decomposition because every step "
+            "compares like with like inside one context -- the drop from "
+            f"{fmt_int(cell_num(e1, 'sys.plasma_v0.n100', 'gas_used_mean'))} to "
+            f"{fmt_int(sys_opt)} gas isolates the per-iteration allocation within the "
+            "full contract, and the steps below it isolate the commitment primitive "
+            "within the harness. Only the single boundary between them crosses "
+            "contexts, and it is quantified here rather than absorbed into a step."
+        )
+    else:
+        context_note = ""
+    notes = table_notes(context_note)
+
     return f"""\\begin{{table}}[!t]
 \\caption{{Where the Reported Block-Commitment Cost Came From ($n = 100$)}}
 \\label{{tab:decomposition}}
@@ -587,6 +623,7 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
 {body}
 \\bottomrule
 \\end{{tabular}}
+{notes}
 \\end{{table}}
 """
 

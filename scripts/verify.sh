@@ -62,72 +62,103 @@ if [[ "$RUN_ID_E3" != "$RUN_ID" ]]; then
 fi
 
 # ---------------------------------------------------------------- D1
-hdr "D1  Semua \\fillin{} sudah terisi (kecuali satu placeholder DOI)"
+hdr "D1  Tidak ada placeholder tersisa di paper maupun tabel"
 if [[ -f "$PAPER_TEX" ]]; then
-  python3 - "$PAPER_TEX" <<'PY'
-import re, sys
+  python3 - "$PAPER_TEX" "$TABLES_DIR" <<'PY'
+import glob, os, re, sys
 
 paper = sys.argv[1]
-text = open(paper, encoding="utf-8", errors="replace").read()
+tables_dir = sys.argv[2] if len(sys.argv) > 2 else ""
 
-# The ONE placeholder D1 tolerates, matched as an exact literal. This is a
-# deliberate, narrow exemption for a value that cannot exist yet: the
-# Zenodo DOI is minted on acceptance. It is NOT a loose pattern -- an
-# approximate rule like "ignore any \fillin mentioning DOI" would let a
-# genuinely unfilled number ride along inside a plausible-looking label,
-# which is exactly the failure mode D1 exists to catch.
+# The ONE placeholder D1 tolerates, matched as an exact literal, and ONLY
+# in the paper body. This is a deliberate, narrow exemption for a value
+# that cannot exist yet: the Zenodo DOI is minted on acceptance. It is
+# NOT a loose pattern -- an approximate rule like "ignore any \fillin
+# mentioning DOI" would let a genuinely unfilled number ride along inside
+# a plausible-looking label, which is exactly the failure mode D1 exists
+# to catch.
 DOI_PLACEHOLDER = "Zenodo DOI, to be inserted on acceptance"
 
-# Count USES, not the macro's own definition. \long\def\fillin#1{...}
-# writes "\fillin#1", never "\fillin{", so requiring the brace already
-# excludes it; the explicit \def/\newcommand guard below covers the other
-# spellings. The previous version of this check grep'd for the bare
-# string and so counted the two definition lines as leftover placeholders
-# -- a fully finished paper could never pass it.
-def uses(macro: str) -> list[str]:
+
+def uses(text: str, macro: str) -> list[tuple[int, str]]:
+    """(line number, argument) for every USE of \\macro{...}.
+
+    Counts uses, NOT the macro's own definition: \\long\\def\\fillin#1{...}
+    writes "\\fillin#1", never "\\fillin{", so requiring the brace already
+    excludes it, and the \\def/\\newcommand guard covers other spellings.
+    An earlier version grep'd for the bare string and so counted the two
+    definition lines as leftover placeholders -- a fully finished paper
+    could never have passed it."""
     found = []
-    for line in text.splitlines():
+    for lineno, line in enumerate(text.splitlines(), 1):
         if re.search(r"\\(?:long\\)?\\?def\\" + macro, line) or f"\\newcommand{{\\{macro}}}" in line:
             continue
-        found.extend(re.findall(r"\\" + macro + r"\{([^{}]*)\}", line))
-        # A nested-brace argument would slip past the regex above; count
-        # the openers too and report the discrepancy rather than pass.
+        found.extend((lineno, arg) for arg in re.findall(r"\\" + macro + r"\{([^{}]*)\}", line))
         opens = len(re.findall(r"\\" + macro + r"\{", line))
         got = len(re.findall(r"\\" + macro + r"\{([^{}]*)\}", line))
         if opens > got:
-            found.extend(["<argumen dengan kurung bersarang, tidak bisa dibaca>"] * (opens - got))
+            found.extend([(lineno, "<argumen berkurung bersarang, tidak terbaca>")] * (opens - got))
     return found
 
-fillins = uses("fillin")
-todos = uses("todo")
+
+def read(path: str) -> str:
+    return open(path, encoding="utf-8", errors="replace").read()
+
+
 bad = 0
 
+# ---- paper body ---------------------------------------------------------
+text = read(paper)
+todos = uses(text, "todo")
+fillins = uses(text, "fillin")
+
 if todos:
-    print(f"  \033[31mFAIL\033[0m  {len(todos)} penanda \\todo masih ada (teks interpretasi belum ditulis)")
-    for t in todos[:5]:
-        print(f"           \\todo{{{t}}}")
+    print(f"  \033[31mFAIL\033[0m  {len(todos)} penanda \\todo masih ada di {paper}")
+    for ln, t in todos[:5]:
+        print(f"           {os.path.basename(paper)}:{ln}: \\todo{{{t}}}")
     bad += 1
 else:
-    print("  \033[32mPASS\033[0m  tidak ada \\todo tersisa")
+    print("  \033[32mPASS\033[0m  tidak ada \\todo di badan paper")
 
-others = [f for f in fillins if f != DOI_PLACEHOLDER]
+others = [(ln, f) for ln, f in fillins if f != DOI_PLACEHOLDER]
 doi_count = len(fillins) - len(others)
 
 if others:
     print(f"  \033[31mFAIL\033[0m  {len(others)} penanda \\fillin masih ada di {paper}")
-    for f in others[:8]:
-        print(f"           \\fillin{{{f}}}")
+    for ln, f in others[:8]:
+        print(f"           {os.path.basename(paper)}:{ln}: \\fillin{{{f}}}")
     bad += 1
 elif doi_count > 1:
-    # More than one means a stray copy, not the single citation line.
-    print(f"  \033[31mFAIL\033[0m  placeholder DOI muncul {doi_count}x, seharusnya tepat satu")
+    print(f"  \033[31mFAIL\033[0m  placeholder DOI muncul {doi_count}x di badan paper, seharusnya tepat satu")
     bad += 1
 elif doi_count == 1:
-    # Printed as a PASS but with the count visible: the exemption must
-    # stay in sight, not disappear behind a green line.
     print("  \033[32mPASS\033[0m  pass (1 placeholder DOI menunggu acceptance)")
 else:
-    print("  \033[32mPASS\033[0m  tidak ada \\fillin tersisa")
+    print("  \033[32mPASS\033[0m  tidak ada \\fillin di badan paper")
+
+# ---- generated tables ---------------------------------------------------
+# Zero tolerance here, with NO DOI exemption: a \fillin in a table body is
+# an unmeasured (or unwritten) NUMBER, and it prints as a blue [FILL: ]
+# box in the compiled PDF. D1 used to look only at the paper body, so
+# verify went green while the PDF still showed those boxes inside tables.
+if tables_dir and os.path.isdir(tables_dir):
+    hits = []
+    n_files = 0
+    for path in sorted(glob.glob(os.path.join(tables_dir, "*.tex"))):
+        n_files += 1
+        t = read(path)
+        for macro in ("fillin", "todo"):
+            for ln, arg in uses(t, macro):
+                hits.append((os.path.basename(path), ln, macro, arg))
+    if hits:
+        print(f"  \033[31mFAIL\033[0m  {len(hits)} penanda \\fillin/\\todo di {tables_dir}")
+        for name, ln, macro, arg in hits:
+            print(f"           {name}:{ln}: \\{macro}{{{arg}}}")
+        bad += 1
+    else:
+        print(f"  \033[32mPASS\033[0m  {n_files} berkas di {tables_dir} bebas \\fillin/\\todo")
+else:
+    print(f"  \033[33mSKIP\033[0m  direktori tabel tidak ada: {tables_dir}")
 
 sys.exit(1 if bad else 0)
 PY
