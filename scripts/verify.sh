@@ -62,14 +62,76 @@ if [[ "$RUN_ID_E3" != "$RUN_ID" ]]; then
 fi
 
 # ---------------------------------------------------------------- D1
-hdr "D1  Semua \\fillin{} sudah terisi"
+hdr "D1  Semua \\fillin{} sudah terisi (kecuali satu placeholder DOI)"
 if [[ -f "$PAPER_TEX" ]]; then
-  n_fill=$(grep -c '\\fillin' "$PAPER_TEX" || true)
-  n_todo=$(grep -c '\\todo'   "$PAPER_TEX" || true)
-  if [[ "$n_fill" -eq 0 ]]; then ok "tidak ada \\fillin tersisa"
-  else bad "$n_fill penanda \\fillin masih ada di $PAPER_TEX"; fi
-  if [[ "$n_todo" -eq 0 ]]; then ok "tidak ada \\todo tersisa"
-  else bad "$n_todo penanda \\todo masih ada (teks interpretasi belum ditulis)"; fi
+  python3 - "$PAPER_TEX" <<'PY'
+import re, sys
+
+paper = sys.argv[1]
+text = open(paper, encoding="utf-8", errors="replace").read()
+
+# The ONE placeholder D1 tolerates, matched as an exact literal. This is a
+# deliberate, narrow exemption for a value that cannot exist yet: the
+# Zenodo DOI is minted on acceptance. It is NOT a loose pattern -- an
+# approximate rule like "ignore any \fillin mentioning DOI" would let a
+# genuinely unfilled number ride along inside a plausible-looking label,
+# which is exactly the failure mode D1 exists to catch.
+DOI_PLACEHOLDER = "Zenodo DOI, to be inserted on acceptance"
+
+# Count USES, not the macro's own definition. \long\def\fillin#1{...}
+# writes "\fillin#1", never "\fillin{", so requiring the brace already
+# excludes it; the explicit \def/\newcommand guard below covers the other
+# spellings. The previous version of this check grep'd for the bare
+# string and so counted the two definition lines as leftover placeholders
+# -- a fully finished paper could never pass it.
+def uses(macro: str) -> list[str]:
+    found = []
+    for line in text.splitlines():
+        if re.search(r"\\(?:long\\)?\\?def\\" + macro, line) or f"\\newcommand{{\\{macro}}}" in line:
+            continue
+        found.extend(re.findall(r"\\" + macro + r"\{([^{}]*)\}", line))
+        # A nested-brace argument would slip past the regex above; count
+        # the openers too and report the discrepancy rather than pass.
+        opens = len(re.findall(r"\\" + macro + r"\{", line))
+        got = len(re.findall(r"\\" + macro + r"\{([^{}]*)\}", line))
+        if opens > got:
+            found.extend(["<argumen dengan kurung bersarang, tidak bisa dibaca>"] * (opens - got))
+    return found
+
+fillins = uses("fillin")
+todos = uses("todo")
+bad = 0
+
+if todos:
+    print(f"  \033[31mFAIL\033[0m  {len(todos)} penanda \\todo masih ada (teks interpretasi belum ditulis)")
+    for t in todos[:5]:
+        print(f"           \\todo{{{t}}}")
+    bad += 1
+else:
+    print("  \033[32mPASS\033[0m  tidak ada \\todo tersisa")
+
+others = [f for f in fillins if f != DOI_PLACEHOLDER]
+doi_count = len(fillins) - len(others)
+
+if others:
+    print(f"  \033[31mFAIL\033[0m  {len(others)} penanda \\fillin masih ada di {paper}")
+    for f in others[:8]:
+        print(f"           \\fillin{{{f}}}")
+    bad += 1
+elif doi_count > 1:
+    # More than one means a stray copy, not the single citation line.
+    print(f"  \033[31mFAIL\033[0m  placeholder DOI muncul {doi_count}x, seharusnya tepat satu")
+    bad += 1
+elif doi_count == 1:
+    # Printed as a PASS but with the count visible: the exemption must
+    # stay in sight, not disappear behind a green line.
+    print("  \033[32mPASS\033[0m  pass (1 placeholder DOI menunggu acceptance)")
+else:
+    print("  \033[32mPASS\033[0m  tidak ada \\fillin tersisa")
+
+sys.exit(1 if bad else 0)
+PY
+  [[ $? -eq 0 ]] || fail=$((fail+1))
 else
   warn "paper tidak ditemukan di $PAPER_TEX (set PAPER_TEX=...)"
 fi
