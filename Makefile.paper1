@@ -27,7 +27,7 @@ p1-help:
 	@echo "p1-verify   cek D1-D7"
 
 p1-anvil:
-	anvil --port $(ANVIL_PORT) --gas-limit $(ANVIL_GAS_LIMIT) --chain-id 31337
+	@bash scripts/anvil_paper1.sh
 
 p1-freeze:
 	@bash scripts/freeze_paper1.sh

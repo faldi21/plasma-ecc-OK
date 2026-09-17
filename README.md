@@ -42,7 +42,16 @@ frozen at tag time).
 make freeze          # tags paper1-rev1-frozen (once), writes data/raw/<RUN_ID>/manifest.json,
                       # sets RUN_ID (data/LATEST) for every command below
 
-make anvil           # separate terminal: local L2 node for E1/E2's L2 portion and all of E3
+make anvil           # separate terminal: local L2 node for E1/E2's L2 portion and all of E3.
+                      #   Runs scripts/anvil_paper1.sh, which starts Anvil with the exact flags
+                      #   recorded in each run's manifest AND funds the harness's own accounts
+                      #   (ANVIL_FUND_ETH, default 10000 ETH each) from Anvil's default account
+                      #   #0. That funding step is REQUIRED, not cosmetic: Anvil funds only its
+                      #   own default accounts, while the harness signs with
+                      #   L2_OPERATOR_PRIVATE_KEY/OPERATOR_PRIVATE_KEY from .env -- an account
+                      #   Anvil has never heard of. Without it the first contract deploy of E1/
+                      #   E2/E3 fails at eth_estimateGas with "Transaction creation failed".
+                      #   Leave it running; Ctrl-C stops Anvil.
 
 make e1               # bench/e1_commit_cost.ts -- add --dry-run first to smoke-test without
 make e2               #   touching Sepolia; the real run needs SEPOLIA_RPC_URL funded

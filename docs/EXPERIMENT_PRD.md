@@ -107,6 +107,31 @@ verify:    ## cek D1-D7
 
 Aturan: **matikan hal yang bikin variansi** (VS Code, sinkron OneDrive, update otomatis). Reviewer akan melihat SD dan CI; noise tinggi merusak kesimpulan.
 
+### 2.1 Penyiapan node L2 (wajib, bukan detail teknis)
+
+L2 dinyalakan lewat `make anvil` → `scripts/anvil_paper1.sh`, **bukan** `anvil`
+telanjang. Skrip itu menjalankan Anvil dengan argumen yang sama persis seperti
+yang tercatat di `manifest.json` (`--port $ANVIL_PORT --gas-limit
+$ANVIL_GAS_LIMIT --chain-id 31337`), lalu **mendanai akun harness**.
+
+Langkah pendanaan ini bagian dari prosedur, bukan tambalan: Anvil hanya
+mendanai akun bawaannya sendiri, sedangkan harness menandatangani dengan
+`L2_OPERATOR_PRIVATE_KEY`/`OPERATOR_PRIVATE_KEY` dari `.env` — akun
+project-specific yang tidak dikenal Anvil, jadi saldonya 0. Tanpa pendanaan,
+deploy kontrak pertama di E1/E2/E3 gagal di `eth_estimateGas` dengan
+"Transaction creation failed", dan E3 tidak bisa jalan sama sekali. Selama
+kampanye ini sempat ditambal manual tiap node di-restart.
+
+| Akun | Dari | Didanai oleh | Catatan |
+|---|---|---|---|
+| Operator L2 | `L2_OPERATOR_PRIVATE_KEY`, fallback `OPERATOR_PRIVATE_KEY` | `scripts/anvil_paper1.sh`, transfer dari akun bawaan Anvil #0, sebesar `ANVIL_FUND_ETH` (default 10000) | Mendeploy semua kontrak dan mengirim semua transaksi operator di E1, fase L2 E2, dan E3 |
+| Deployer | `DEPLOYER_PRIVATE_KEY` | idem | **Tidak dipakai** di `bench/`; milik `script/*.s.sol`. Didanai karena gratis di chain lokal |
+| K akun pengirim E3 + akun warm-up | diturunkan per sel dari seed (`deriveAccountKey`) | `bench/e3_throughput.ts` sendiri, via `anvil_setBalance` | Berubah tiap sel, jadi tidak bisa dan tidak perlu didanai di awal |
+
+Skrip bersifat idempoten (saldo ≥ `ANVIL_FUND_ETH` dilewati), menunggu RPC
+siap dengan polling `eth_blockNumber` (maks. 30 detik, bukan `sleep`), dan
+mematikan Anvil saat Ctrl-C sehingga tidak meninggalkan proses yatim.
+
 ---
 
 ## 3. Harness bersama
