@@ -47,7 +47,7 @@ no computation beyond formatting (mean±SD strings, thousands separators,
 Hard rules enforced here:
   - a cell with no ok data -> \\fillin{} (never an estimated number)
   - a cell whose primary_status is exceeds_block_gas_limit -> the words
-    "melebihi batas blok" plus a table footnote, not a blank cell and not
+    EXCEEDS_BLOCK_LIMIT_LABEL plus a table footnote, not a blank cell and not
     a number
   - gas integers use a consistent LaTeX-safe thousands separator
   - running this script twice on the same inputs produces byte-identical
@@ -70,10 +70,60 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-FOOTNOTE_EXCEEDS = (
-    "\\footnote{Estimated gas for this call exceeded the node's configured block gas limit "
-    "before any transaction was sent; the limit is treated as part of the measured object and "
-    "was not raised to force the cell through (docs/EXPERIMENT_PRD.md).}"
+# The single escaper for ANY free text that reaches a .tex file: values
+# read from CSV/stats.json/git, and the literal prose in this file's own
+# footnote constants. Every LaTeX special character is covered, not just
+# the handful that happened to show up in past data -- an unescaped "_"
+# in a footnote path (docs/EXPERIMENT_PRD.md) is exactly the kind of bug
+# that makes the paper fail to compile long after the table looked fine.
+#
+# Substitution is SINGLE-PASS over characters, never a sequence of
+# str.replace() calls: replacing "\\" first emits braces, which a later
+# "{" rule would then corrupt into "\textbackslash\{\}".
+_LATEX_ESCAPES = {
+    "\\": "\\textbackslash{}",
+    "&": "\\&",
+    "%": "\\%",
+    "$": "\\$",
+    "#": "\\#",
+    "_": "\\_",
+    "{": "\\{",
+    "}": "\\}",
+    "~": "\\textasciitilde{}",
+    "^": "\\textasciicircum{}",
+}
+
+
+def latex_escape(s: Any) -> str:
+    """LaTeX-safe rendering of arbitrary text. Use for every string that
+    is not itself LaTeX markup."""
+    if s is None:
+        return ""
+    return "".join(_LATEX_ESCAPES.get(ch, ch) for ch in str(s))
+
+
+# The paper is in English: every string this script emits into a .tex file
+# must be too. Defined once so the two tables that use it cannot drift
+# apart (they previously both printed the Indonesian "melebihi batas
+# blok").
+EXCEEDS_BLOCK_LIMIT_LABEL = "exceeds block gas limit"
+
+# Free prose, so it goes through latex_escape() like any other free text --
+# the raw "_" in the PRD path used to reach the .tex unescaped and broke
+# the LaTeX build.
+def tex_footnote(text: str) -> str:
+    """A LaTeX footnote carrying free prose. \\protect is NOT optional:
+    \\footnote is fragile, so an unprotected one inside \\caption{} aborts
+    the build with "Argument of \\@caption has an extra }" -- which is how
+    the two footnotes on the L1 gas table used to break compilation. The
+    text is escaped here, so callers pass plain prose, never markup."""
+    return "\\protect\\footnote{" + latex_escape(text) + "}"
+
+
+FOOTNOTE_EXCEEDS = tex_footnote(
+    "Estimated gas for this call exceeded the node's configured block gas limit "
+    "before any transaction was sent; the limit is treated as part of the measured "
+    "object and was not raised to force the cell through (docs/EXPERIMENT_PRD.md)."
 )
 
 COMMIT_VARIANTS = [
@@ -203,15 +253,6 @@ def fmt_pct(x: Any, decimals: int = 1) -> str:
     return f"{float(x):.{decimals}f}\\%"
 
 
-def latex_escape(s: str) -> str:
-    if s is None:
-        return ""
-    out = str(s)
-    for a, b in [("\\", "\\textbackslash{}"), ("_", "\\_"), ("%", "\\%"), ("&", "\\&"), ("#", "\\#")]:
-        out = out.replace(a, b)
-    return out
-
-
 # ---------------------------------------------------------------- CSV / stats.json loading
 
 
@@ -246,7 +287,7 @@ def cell_status(cells: dict[str, dict[str, str]], cell_id: str) -> str | None:
 def gas_cell_text(cells: dict[str, dict[str, str]], cell_id: str, mean_col="gas_used_mean", sd_col="gas_used_sd", n_col="gas_used_n") -> str:
     status = cell_status(cells, cell_id)
     if status == "exceeds_block_gas_limit":
-        return "melebihi batas blok" + FOOTNOTE_EXCEEDS
+        return EXCEEDS_BLOCK_LIMIT_LABEL + FOOTNOTE_EXCEEDS
     mean = cell_num(cells, cell_id, mean_col)
     sd = cell_num(cells, cell_id, sd_col)
     n = cell_num(cells, cell_id, n_col)
@@ -370,6 +411,12 @@ def _read_foundry_solc_version() -> str:
     return m.group(1) if m else fillin("solc version")
 
 
+# NOTE: never put math ($...$) INSIDE \textbf{} in an emitted header.
+# The ieeeaccess class chokes on it -- "\textbf{$\Delta$ vs. baseline}"
+# aborted the paper build with "Extra }, or forgotten $" even though the
+# same markup compiles fine under the standard article class, so a
+# table-only test does not catch it. Put the math outside the \textbf{}
+# instead: "$\Delta$ \textbf{vs. baseline}".
 # ---------------------------------------------------------------- tab_commit_cost.tex
 
 
@@ -430,7 +477,7 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
 \\setlength{{\\tabcolsep}}{{4pt}}
 \\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{\\textbf{{$\\Delta$ vs. baseline}}\\footnotemark}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}\\footnotemark}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
 \\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
 \\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs \\\\
 \\midrule
@@ -524,15 +571,22 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
 # measurement, not a fact this script is allowed to assert.
 VENUE_LABELS = {"sepolia": "Sepolia", "local": "local devnet"}
 
-FOOTNOTE_VENUE = (
-    "\\footnote{Venue is where the measurement was executed, not which protocol "
-    "layer the operation belongs to. All rows are RootChainUTXO.sol (L1) "
-    "operations, but \\texttt{finalizeExit} was measured on a local devnet because "
-    "it requires advancing time past the exit challenge period, which is not "
-    "possible on a public network; every other row was measured on Sepolia. "
-    "The two venues share the same EVM semantics and gas schedule, so the gas "
-    "figures remain comparable, but they are not the same chain and are labelled "
-    "as such rather than silently pooled.}"
+FOOTNOTE_L1_SCOPE = tex_footnote(
+    "The evaluated artifact does not include a Merkle-based RootChain contract, so "
+    "L1 cost is reported as an absolute figure for the ASC deployment only, not as "
+    "a cross-primitive comparison -- a deliberate scope limit "
+    "(docs/EXPERIMENT_PRD.md S5), not an unmeasured gap."
+)
+
+FOOTNOTE_VENUE = tex_footnote(
+    "Venue is where the measurement was executed, not which protocol layer the "
+    "operation belongs to. All rows are RootChainUTXO.sol (L1) operations, but "
+    "finalizeExit was measured on a local devnet because it requires advancing "
+    "time past the exit challenge period, which is not possible on a public "
+    "network; every other row was measured on Sepolia. The two venues share the "
+    "same EVM semantics and gas schedule, so the gas figures remain comparable, "
+    "but they are not the same chain and are labelled as such rather than "
+    "silently pooled."
 )
 
 
@@ -625,7 +679,7 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
 \\end{{table*}}
 
 \\begin{{table}}[!t]
-\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD)\\footnote{{The evaluated artifact does not include a Merkle-based RootChain contract, so L1 cost is reported as an absolute figure for the ASC deployment only, not as a cross-primitive comparison -- a deliberate scope limit (docs/EXPERIMENT\\_PRD.md \\S5), not an unmeasured gap.}}{FOOTNOTE_VENUE}}}
+\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD){FOOTNOTE_L1_SCOPE}{FOOTNOTE_VENUE}}}
 \\label{{tab:op-gas-l1}}
 \\centering
 \\scriptsize
@@ -651,7 +705,7 @@ def build_tab_throughput(e3: dict[str, dict[str, str]], t_value: int) -> str:
         status = cell_status(e3, cell_id)
         if status == "exceeds_block_gas_limit":
             lines.append(
-                f"{primitive_label} & {placement_label} & \\multicolumn{{4}}{{c}}{{melebihi batas blok}}{FOOTNOTE_EXCEEDS} \\\\"
+                f"{primitive_label} & {placement_label} & \\multicolumn{{4}}{{c}}{{{EXCEEDS_BLOCK_LIMIT_LABEL}}}{FOOTNOTE_EXCEEDS} \\\\"
             )
             continue
 
@@ -704,7 +758,7 @@ def build_tab_exploits(e4: dict[str, dict[str, str]]) -> str:
     lines = []
     for cell_id, row in sorted(e4.items()):
         test_name = row.get("test_name") or cell_id
-        status = row.get("primary_status") or fillin()
+        status = latex_escape(row.get("primary_status")) or fillin()
         gas_mean = cell_num(e4, cell_id, "gas_used_mean")
         gas_text = fmt_int(gas_mean)
         notes = latex_escape(row.get("notes", ""))
