@@ -78,7 +78,16 @@ fi
 hdr "D2  Tabel dan gambar bisa digenerate ulang secara identik"
 if command -v python3 >/dev/null && [[ -d "$PROC" ]]; then
   tmp="$(mktemp -d)"
-  if python3 analysis/make_tables.py --run-id "$RUN_ID" --data "$DATA_ROOT" --out "$tmp" >/dev/null 2>&1; then
+  # --run-id-e3 is REQUIRED here, not optional: E3 is frozen as its own
+  # dataset (ANALYSIS_PLAN.md Amandemen 2), so regenerating without it
+  # rebuilds tab_throughput against a RUN_ID that holds no E3 data at all.
+  # Every throughput cell then comes out as \fillin{} and D2 reports the
+  # table as "berbeda setelah regenerasi (ada edit manual?)" -- blaming a
+  # manual edit for what is really this command's own missing argument.
+  # The bootstrap CIs are NOT the cause: bootstrap_seed is frozen in
+  # ANALYSIS_PLAN.md and make_tables.py is byte-deterministic given the
+  # same two RUN_IDs.
+  if python3 analysis/make_tables.py --run-id "$RUN_ID" --run-id-e3 "$RUN_ID_E3" --data "$DATA_ROOT" --out "$tmp" >/dev/null 2>&1; then
     diffs=0
     for f in "$TABLES_DIR"/*.tex; do
       [[ -e "$f" ]] || continue

@@ -428,8 +428,57 @@ sudah beku:
    provenance tx di E1 hanya diterapkan ke `bench/e1_commit_cost.ts` dan
    **tidak pernah dibawa** ke jalur `finalizeExit` di `bench/e2_sync_gas.ts`.
 
+## Catatan reproduktibilitas — determinisme bootstrap dan regenerasi tabel
+
+*Ditambahkan 2026-09-17. **Bukan amandemen**: tidak ada metode, uji, margin,
+kontras, seed, atau nilai terukur yang berubah. Bagian ini hanya mencatat
+sifat yang sudah berlaku, supaya tidak salah didiagnosis lagi.*
+
+### Seed bootstrap sudah tetap, dan sengaja bukan turunan RUN_ID
+
+`bootstrap_seed: 20260914` berada di blok `yaml` beku Bagian 5 di atas.
+`analysis/stats.py` membacanya dari sana dan meneruskannya ke **setiap**
+aliran acak: `bootstrap_ratio_ci()`, `_bootstrap_pct_diff_ci()` (memakai
+`seed + 1` agar alirannya berbeda tapi tetap deterministik), dan bootstrap
+delta pada analisis Amandemen 1. Tidak ada `np.random` tanpa seed di
+seluruh berkas.
+
+Nilai itu juga dicatat ke `stats.json` sebagai provenance, bersama
+`bootstrap_seed_source` dan `bootstrap_seed_is_run_id_derived: false`.
+
+Seed ini **tidak diturunkan dari RUN_ID**, dan itu disengaja. Kalau
+diturunkan dari RUN_ID, CI bootstrap akan menjadi fungsi dari nama
+direktori dataset: membekukan ulang dataset dengan RUN_ID baru akan
+menggeser setiap CI yang sudah diterbitkan, tanpa satu pun angka
+pengukuran berubah. Dua dataset yang dibekukan terpisah (E1/E2/E4 dan E3,
+Amandemen 2) juga akan di-resample dengan aliran yang berbeda-beda.
+Konstanta beku memberi determinisme yang sama tanpa salah satu pun akibat
+itu, dan patuh pada IRON RULE 6.
+
+### Regenerasi tabel byte-identik — syaratnya kedua RUN_ID
+
+`make tables` yang dijalankan dua kali menghasilkan `paper/tables/*.tex`
+yang **identik byte-per-byte**. Syaratnya: **kedua** RUN_ID diteruskan.
+
+`scripts/verify.sh` D2 dulu meregenerasi tabel dengan `--run-id` saja.
+Karena E3 dibekukan sebagai dataset sendiri, `tab_throughput` lalu dibangun
+dari RUN_ID yang sama sekali tidak memuat data E3, sehingga seluruh selnya
+keluar sebagai `\fillin{}` dan D2 melaporkan "berbeda setelah regenerasi
+(ada edit manual?)" — menuduh edit manual atas kekurangan argumennya
+sendiri. Ini kelas cacat yang sama dengan `make_figures.py` yang dulu tidak
+menerima `--run-id-e3`. Sudah diperbaiki; D2 kini meneruskan `$RUN_ID_E3`.
+
+Pelajarannya: gejala "keluaran tidak deterministik" pada pipeline ini jauh
+lebih mungkin berarti **satu tahap tidak menerima dataset yang sama**
+daripada berarti ada RNG tanpa seed. Periksa argumen dulu.
+
 ## Riwayat perubahan
 
+- 2026-09-17: catatan reproduktibilitas ditambahkan (bukan amandemen) —
+  seed bootstrap sudah tetap di blok yaml beku dan sengaja bukan turunan
+  RUN_ID; penyebab D2 gagal adalah verify.sh meregenerasi tabel tanpa
+  `--run-id-e3`, bukan bootstrap tanpa seed. Tidak ada metode atau nilai
+  yang berubah.
 - 2026-09-17: Amandemen 4 ditambahkan — venue pengukuran (`sepolia` /
   `local`) diturunkan terpisah dari `layer` protokol; D6 dikaitkan ke
   venue; `tab_op_gas` menandai venue tiap operasi. Dipicu temuan sepuluh

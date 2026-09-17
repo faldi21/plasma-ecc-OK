@@ -524,7 +524,17 @@ def main() -> None:
         "epsilon_pct": epsilon_pct,
         "epsilon_reference_cell": reference_cell,
         "bootstrap_resamples": bootstrap_resamples,
+        # Reproducibility provenance. The seed is NOT drawn fresh per run
+        # and is NOT derived from RUN_ID: it is a constant frozen in
+        # ANALYSIS_PLAN.md's yaml block before the campaign (IRON RULE 6),
+        # so re-running stats.py on the same dataset reproduces every
+        # bootstrap CI bit-for-bit, and two different datasets are still
+        # resampled with the same stream. Deriving it from RUN_ID would
+        # make the CIs a function of the directory name and would silently
+        # change already-published numbers whenever a dataset is re-frozen.
         "bootstrap_seed": bootstrap_seed,
+        "bootstrap_seed_source": "ANALYSIS_PLAN.md (frozen yaml block)",
+        "bootstrap_seed_is_run_id_derived": False,
     }
 
     # Amandemen 1: independent of the E3 anova/contrasts below -- runs
