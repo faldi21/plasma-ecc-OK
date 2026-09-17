@@ -1,0 +1,16 @@
+{
+  "commit": "d4842b9203cbb21ad8a9f57e18f3b9a25fef6170",
+  "tag": "paper1-rev1-frozen-e3",
+  "created_at": "2026-09-17T09:10:33+07:00",
+  "os": "Linux-7.0.0-31-generic-x86_64-with-glibc2.39",
+  "cpu": "AMD Ryzen 7 5800H with Radeon Graphics",
+  "ram_gb": "13",
+  "anvil": "anvil Version: 1.5.0-stable\nCommit SHA: 1c57854462289b2e71ee7654cd6666217ed86ffd\nBuild Timestamp: 2025-11-26T09:14:24.173470686Z (1764148464)\nBuild Profile: maxperf",
+  "anvil_launch_args": "--port 8546 --gas-limit 300000000 --chain-id 31337",
+  "forge": "forge Version: 1.5.0-stable\nCommit SHA: 1c57854462289b2e71ee7654cd6666217ed86ffd\nBuild Timestamp: 2025-11-26T09:14:24.173470686Z (1764148464)\nBuild Profile: maxperf",
+  "node": "v22.21.1",
+  "python": "3.12.3",
+  "foundry_toml_sha256": "ec6a805e269c5744480a508077361623b77c318f047f8eb9b566ead5810175b6",
+  "package_lock_sha256": "e1be12c1f91d16927a9f6ba36e5c8f1663da4eb39bf16558c8a3d2dc88d552f7",
+  "load_avg": "09:10:33 up  2:13,  1 user,  load average: 0.40, 0.25, 0.41"
+}
