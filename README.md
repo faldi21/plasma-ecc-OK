@@ -1,5 +1,9 @@
 # Plasma-UTXO-ECC: Elliptic Curve Accumulator for Layer 2 Plasma with UTXO Model
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22816436.svg)](https://doi.org/10.5281/zenodo.22816436)
+
+Archived dataset and analysis pipeline: [10.5281/zenodo.22816436](https://doi.org/10.5281/zenodo.22816436) (tag `paper1-rev1-archive`).
+
 > **IEEE Scopus Q1 Research Implementation**  
 > A comparative study of ECC Accumulator vs. Merkle Tree as membership-proof primitives in a Plasma Layer 2 blockchain with UTXO transaction model.
 

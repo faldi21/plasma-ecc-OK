@@ -1,0 +1,10 @@
+10.5281/zenodo.22816436
+https://doi.org/10.5281/zenodo.22816436
+
+Concept DOI for the archived measurement dataset and analysis pipeline of
+"Why Additive Elliptic-Curve Set Commitments Do Not Help Ethereum Plasma:
+A Negative Result from an End-to-End UTXO Implementation".
+
+Archived from tag paper1-rev1-archive, which holds both frozen datasets:
+  20260916-161911-949ccf7  E1/E2/E4  (tag paper1-rev1-frozen)
+  20260917-091033-d4842b9  E3        (tag paper1-rev1-frozen-e3)

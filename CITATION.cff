@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, dataset, or the measurements it contains,
+  please cite it using the metadata below.
+type: dataset
+title: >-
+  Why Additive Elliptic-Curve Set Commitments Do Not Help Ethereum Plasma:
+  A Negative Result from an End-to-End UTXO Implementation
+abstract: >-
+  Frozen measurement datasets, L1 transaction receipts, and the complete
+  analysis pipeline behind the paper. Two datasets are archived and are
+  never merged: 20260916-161911-949ccf7 (E1 commitment cost, E2
+  per-operation gas, E4 exploit tests) and 20260917-091033-d4842b9 (E3
+  hot-path throughput, re-run with one Anvil instance per run to remove
+  chain size as a confound). Throughput is reported as hot-path ops/s,
+  not TPS.
+authors:
+  - family-names: Faldi
+    orcid: "https://orcid.org/0000-0002-2205-2819"
+    affiliation: >-
+      Universitas Gadjah Mada; Universitas Muhammadiyah Kalimantan Timur
+  - family-names: Ashari
+    given-names: Ahmad
+    orcid: "https://orcid.org/0000-0003-1737-6752"
+    affiliation: Universitas Gadjah Mada
+  - family-names: Putra
+    given-names: Agfianto Eko
+    orcid: "https://orcid.org/0000-0002-1568-6864"
+    affiliation: Universitas Gadjah Mada
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22816436
+    description: Archived release (tag paper1-rev1-archive)
+doi: 10.5281/zenodo.22816436
+repository-code: "https://github.com/faldi21/plasma-ecc-OK"
+license: MIT
+keywords:
+  - blockchain
+  - layer 2
+  - plasma
+  - elliptic curve cryptography
+  - cryptographic accumulator
+  - merkle tree
+  - ethereum
+  - negative result
+  - reproducibility
