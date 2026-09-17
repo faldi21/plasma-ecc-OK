@@ -27,6 +27,14 @@
  *   5. After MAX_RESENDS re-sends, give up on THIS transaction only, by
  *      throwing L1ConfirmFailedError. The caller records a "timeout" record
  *      and moves to the next cell -- the campaign does not die.
+ *   6. Every RPC call above goes through withNetworkRetry(), which retries
+ *      TRANSPORT failures (EAI_AGAIN, ECONNRESET, ETIMEDOUT, "fetch
+ *      failed", ...) with exponential backoff for up to
+ *      NETWORK_RETRY_BUDGET_MS. E2 also died once on exactly this: a
+ *      momentary DNS hiccup while asking for a receipt became an unhandled
+ *      rejection. Errors the node actually answered with (revert,
+ *      underpriced, nonce) are never retried -- they are decisions, not
+ *      dropped packets, and are rethrown on the first try.
  *
  * gas_used is never invented for a transaction with no receipt: callers
  * that catch L1ConfirmFailedError write gas_used: null (CLAUDE.md IRON
@@ -57,6 +65,103 @@ const BUMP_NUMERATOR = 125n;
 const BUMP_DENOMINATOR = 100n;
 /** Guard against an unbounded bump loop when a node keeps saying "underpriced". */
 const MAX_UNDERPRICED_BUMPS = 4;
+
+/** Total time a single RPC call may spend being retried through transient network trouble. */
+export const NETWORK_RETRY_BUDGET_MS = 5 * 60 * 1000;
+const RETRY_BACKOFF_START_MS = 1_000;
+const RETRY_BACKOFF_CAP_MS = 30_000;
+
+/**
+ * Transport-level failures: the request never got a considered answer, so
+ * asking again is both safe and likely to work. E2 died on the first of
+ * these -- a momentary DNS hiccup (getaddrinfo EAI_AGAIN) while polling
+ * for a receipt -- which surfaced as an unhandled rejection and took the
+ * whole campaign with it.
+ */
+const TRANSIENT_MARKERS = [
+  "eai_again",
+  "econnreset",
+  "etimedout",
+  "enotfound",
+  "epipe",
+  "fetch failed",
+  "socket hang up",
+  "network socket disconnected",
+];
+
+/**
+ * Answers the node DID consider. Retrying these changes nothing (the node
+ * will say the same thing) and, for a send, could duplicate work -- so
+ * they must break out of the retry loop immediately and be handled by the
+ * caller's own logic (fee bump, "timeout" record, ...).
+ */
+const PROTOCOL_MARKERS = [
+  "execution reverted",
+  "insufficient funds",
+  "nonce too low",
+  "nonce too high",
+  "already known",
+  "replacement transaction underpriced",
+  "replacement fee too low",
+  "intrinsic gas too low",
+  "exceeds block gas limit",
+  "gas required exceeds",
+  "transaction creation failed",
+];
+
+function errorText(err: unknown): string {
+  const e = err as { message?: string; details?: string; shortMessage?: string; cause?: unknown };
+  const parts = [e?.message, e?.details, e?.shortMessage];
+  const cause = e?.cause as { message?: string; details?: string } | undefined;
+  if (cause) parts.push(cause.message, cause.details);
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+/** True only for transport failures, never for an answer the node actually gave. */
+export function isTransientNetworkError(err: unknown): boolean {
+  const text = errorText(err);
+  if (PROTOCOL_MARKERS.some((m) => text.includes(m))) return false;
+  return TRANSIENT_MARKERS.some((m) => text.includes(m));
+}
+
+/**
+ * Runs one RPC call, retrying transient network failures with exponential
+ * backoff until NETWORK_RETRY_BUDGET_MS is spent, then rethrowing. A
+ * protocol error is rethrown immediately, on the first try.
+ */
+export async function withNetworkRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  budgetMs: number = NETWORK_RETRY_BUDGET_MS
+): Promise<T> {
+  const deadline = Date.now() + budgetMs;
+  let delay = RETRY_BACKOFF_START_MS;
+  let attempt = 0;
+
+  for (;;) {
+    attempt += 1;
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isTransientNetworkError(err)) throw err;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        console.error(
+          `[l1tx] ${label}: masih gagal jaringan setelah ${attempt} percobaan / ` +
+            `${(budgetMs / 60000).toFixed(1)} menit -- menyerah.`
+        );
+        throw err;
+      }
+      const wait = Math.min(delay, Math.max(remaining, 0));
+      console.warn(
+        `[l1tx] ${label}: galat jaringan sementara (${String((err as Error).message).split("\n")[0].slice(0, 120)}); ` +
+          `coba lagi dalam ${(wait / 1000).toFixed(1)}s (percobaan ${attempt}, sisa anggaran ${(remaining / 1000).toFixed(0)}s)`
+      );
+      await sleep(wait);
+      delay = Math.min(delay * 2, RETRY_BACKOFF_CAP_MS);
+    }
+  }
+}
 
 export interface Fees {
   maxFeePerGas: bigint;
@@ -100,11 +205,13 @@ function bump(value: bigint): bigint {
 
 /** Fees derived from the network RIGHT NOW, with a margin over the current base fee. */
 export async function currentFees(publicClient: PublicClient): Promise<Fees> {
-  const block = await publicClient.getBlock({ blockTag: "latest" });
+  const block = await withNetworkRetry("getBlock(latest)", () => publicClient.getBlock({ blockTag: "latest" }));
   const baseFee = block.baseFeePerGas ?? 0n;
   let tip = MIN_TIP_WEI;
   try {
-    const suggested = await publicClient.estimateMaxPriorityFeePerGas();
+    const suggested = await withNetworkRetry("estimateMaxPriorityFeePerGas", () =>
+      publicClient.estimateMaxPriorityFeePerGas()
+    );
     if (suggested > tip) tip = suggested;
   } catch {
     // Node without eth_maxPriorityFeePerGas: MIN_TIP_WEI is the floor anyway.
@@ -135,14 +242,19 @@ async function waitForReceiptOrDrop(publicClient: PublicClient, hash: Hex, budge
 
   while (Date.now() < deadline) {
     try {
-      return { kind: "receipt", receipt: await publicClient.getTransactionReceipt({ hash }) };
+      return {
+        kind: "receipt",
+        receipt: await withNetworkRetry(`getTransactionReceipt(${hash.slice(0, 10)}...)`, () =>
+          publicClient.getTransactionReceipt({ hash })
+        ),
+      };
     } catch (err) {
       if (!(err instanceof TransactionReceiptNotFoundError)) throw err;
     }
 
     // No receipt yet. Is the transaction still known to the node at all?
     try {
-      await publicClient.getTransaction({ hash });
+      await withNetworkRetry(`getTransaction(${hash.slice(0, 10)}...)`, () => publicClient.getTransaction({ hash }));
       unknownPolls = 0; // still in the mempool (or just mined) -- keep waiting
     } catch (err) {
       if (!(err instanceof TransactionNotFoundError)) throw err;
@@ -172,7 +284,9 @@ export async function sendL1WithRetry(
   send: (overrides: Fees & { nonce: number }) => Promise<Hex>,
   budgetMs: number = CONFIRM_BUDGET_MS
 ): Promise<L1SendOutcome> {
-  const nonce = await publicClient.getTransactionCount({ address: account.address, blockTag: "pending" });
+  const nonce = await withNetworkRetry(`${label}: getTransactionCount`, () =>
+    publicClient.getTransactionCount({ address: account.address, blockTag: "pending" })
+  );
   let fees = await currentFees(publicClient);
   const hashes: Hex[] = [];
   const reasons: string[] = [];
@@ -181,7 +295,7 @@ export async function sendL1WithRetry(
     let hash: Hex | null = null;
     for (let bumpTry = 0; bumpTry <= MAX_UNDERPRICED_BUMPS; bumpTry++) {
       try {
-        hash = await send({ ...fees, nonce });
+        hash = await withNetworkRetry(`${label}: send (nonce ${nonce})`, () => send({ ...fees, nonce }));
         break;
       } catch (err) {
         if (!isReplacementUnderpriced(err) || bumpTry === MAX_UNDERPRICED_BUMPS) throw err;
