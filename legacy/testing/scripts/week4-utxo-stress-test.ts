@@ -72,18 +72,36 @@ function loadConfig(): Config {
   const plasmaChainUtxoAddress = (process.env.PLASMA_CHAIN_UTXO_ADDRESS || '0x2860763ac53e487b1521dfd6510f6780b2d86223') as Address;
   const plasmaTokenAddress = (process.env.L2_PLASMA_TOKEN_ADDRESS || '0x9E7088C23e5C0B2D02cD7886A1BDbC7FE8b71016') as Address;
 
+// KREDENSIAL DIHAPUS: tiga kunci privat pernah tertulis literal di blok
+// `users` di bawah. Kunci-kunci itu sudah dinonaktifkan dan dananya
+// dipindahkan. Kunci sekarang dibaca dari environment dan tidak punya
+// fallback -- skrip ini gagal dengan pesan jelas kalau env-nya kosong,
+// bukan diam-diam memakai akun yang ter-commit.
+  const requireUserKey = (slot: number): Hex => {
+    const name = `STRESS_USER${slot}_PRIVATE_KEY`;
+    const value = process.env[name];
+    if (!value) {
+      throw new Error(
+        `Missing required env var: ${name}. ` +
+          'Kunci pengguna stress-test tidak lagi disimpan di berkas ini; ' +
+          'set STRESS_USER1/2/3_PRIVATE_KEY di .env (yang di-gitignore).',
+      );
+    }
+    return value as Hex;
+  };
+
   const users = [
     {
       address: '0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76' as Address,
-      privateKey: '0x873f5eb8696d033c40d9990310b9c618bf8defdcec4e0c3abc2db3f88e451080' as Hex,
+      privateKey: requireUserKey(1),
     },
     {
       address: '0x62dc14Fe819A241e176ee6A813f51045d04A0cda' as Address,
-      privateKey: '0x79d5afa4d8b4e755efddefc8aa9f0cce663e9e96317e1d234d001824197794d1' as Hex,
+      privateKey: requireUserKey(2),
     },
     {
       address: '0xfa5410ca7e30c694d332a0b7f5ff5ef74d84e0ab' as Address,
-      privateKey: '0x070d8f7d287854522182733db1f2f5fc4609480167dced6a1e93213b22694aa3' as Hex,
+      privateKey: requireUserKey(3),
     },
   ];
 

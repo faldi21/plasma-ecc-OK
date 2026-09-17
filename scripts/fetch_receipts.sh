@@ -28,7 +28,12 @@ set +a
 
 RUN_ID="${1:-${RUN_ID:-}}"
 DATA_ROOT="${DATA_ROOT:-data}"
-RPC="${SEPOLIA_RPC_URL:-${L1_RPC:-}}"
+# ETH_RPC_URL is the ONE source, and it is EXPORTED rather than passed as
+# --rpc-url: a command-line RPC argument is visible to every user on the
+# machine via `ps`, which is how this script previously leaked an Infura
+# project ID. `cast` reads ETH_RPC_URL from the environment natively.
+RPC="${ETH_RPC_URL:-${SEPOLIA_RPC_URL:-${L1_RPC:-}}}"
+export ETH_RPC_URL="$RPC"
 
 if [[ -z "$RUN_ID" ]]; then
   echo "FATAL: RUN_ID belum ditentukan. Pakai: RUN_ID=<id> bash scripts/fetch_receipts.sh" >&2
@@ -37,7 +42,7 @@ if [[ -z "$RUN_ID" ]]; then
   exit 2
 fi
 if [[ -z "$RPC" ]]; then
-  echo "FATAL: SEPOLIA_RPC_URL (atau L1_RPC) belum diset di .env" >&2
+  echo "FATAL: ETH_RPC_URL belum diset di .env" >&2
   exit 2
 fi
 
@@ -102,7 +107,7 @@ while IFS= read -r h; do
     # for an unknown hash to be mined instead of reporting "tx not found",
     # which hung an earlier version of this script indefinitely. timeout is
     # the belt-and-braces guard for a wedged RPC connection.
-    if timeout 60 cast receipt "$h" --json --async --rpc-url "$RPC" > "$WORK/r.json" 2>"$WORK/err.txt"; then
+    if timeout 60 cast receipt "$h" --json --async > "$WORK/r.json" 2>"$WORK/err.txt"; then
       if [[ -s "$WORK/r.json" ]] && grep -q '"transactionHash"' "$WORK/r.json"; then
         mv "$WORK/r.json" "$dest"
         fetched=$((fetched+1)); ok=1

@@ -61,7 +61,13 @@ interface Config {
 
 function loadConfig(): Config {
   const l2RpcUrl = process.env.L2_RPC_URL || 'http://localhost:8545';
-  const senderPrivateKey = process.env.PRIVATE_KEY_L2 || process.env.SENDER_PRIVATE_KEY || '0xac0974bec39a17e36ba4a6b4d238ff944bacb476c6b8d6c1f02b3865fb97a73d';
+  // KREDENSIAL DIHAPUS: nilai fallback di bawah dulunya kunci privat/URL RPC
+  // yang ter-commit. Kunci lama sudah dinonaktifkan dan dananya dipindahkan;
+  // nilainya kini wajib datang dari environment, tanpa fallback.
+  const senderPrivateKey = process.env.PRIVATE_KEY_L2 || process.env.SENDER_PRIVATE_KEY;
+  if (!senderPrivateKey) {
+    throw new Error('Missing required env var: PRIVATE_KEY_L2 (atau SENDER_PRIVATE_KEY)');
+  }
   const receiverAddress = process.env.RECEIVER_ADDRESS || '0xba4BAe28e13cD93396c6A19880d3453E1d0F6c76';
   const stopOnFailure = process.env.WEEK3_STOP_ON_FAILURE === 'true';
   const failureThreshold = parseInt(process.env.WEEK3_FAILURE_THRESHOLD || '10'); // 10% default

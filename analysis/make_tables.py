@@ -493,7 +493,16 @@ def delta_cell_text(
 
 
 def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, Any] | None) -> str:
-    lines = []
+    """TWO tables in one file, so the paper's single \\input still picks up
+    both (the same shape tab_op_gas already uses).
+
+    They were one nine-column table until reviewer R1-5 asked for L2 and L1
+    cost to be separated -- and that table overflowed the two-column text
+    block by 225pt, so its last three columns (anchoring gas, calldata and
+    the transaction count) were never printed at all. Splitting answers the
+    reviewer and makes the numbers visible; neither is cosmetic."""
+    l2_lines = []
+    anchor_lines = []
     for variant_id, label in COMMIT_VARIANTS:
         n10 = gas_cell_text(e1, f"bench.commit_{variant_id}.n10")
         n100 = gas_cell_text(e1, f"bench.commit_{variant_id}.n100")
@@ -502,50 +511,36 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
         d10 = delta_cell_text(commit_cost, variant_id, 10, e1)
         d100 = delta_cell_text(commit_cost, variant_id, 100, e1)
         d1000 = delta_cell_text(commit_cost, variant_id, 1000, e1)
+        l2_lines.append(f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} \\\\")
 
-        # slot_update, not the pooled cell: the one slot_init observation
-        # is the contract's own one-off initialization cost and belongs to
-        # whichever variant happened to anchor first, not to its
-        # commitment scheme (aggregate.split_l1_anchor_by_slot_state).
-        # Pooling them inflated that variant's mean by 3,420 gas and its
-        # SD by ~700x.
+        # slot_update, not the pooled cell: the one slot_init observation is
+        # the contract's own one-off initialization cost and belongs to
+        # whichever variant happened to anchor first, not to its commitment
+        # scheme (aggregate.split_l1_anchor_by_slot_state).
         l1_cell = f"e1.{variant_id}.l1_anchor.n100.slot_update"
         if variant_id == "baseline":
             # Baseline commits no digest, so there is nothing to anchor.
-            # Not a missing measurement -- the quantity does not exist.
-            l1_gas = NOT_APPLICABLE
-            l1_calldata = NOT_APPLICABLE
+            l1_gas = l1_calldata = l1_txs = NOT_APPLICABLE
         elif l1_cell not in e1:
-            l1_gas = fillin()
-            l1_calldata = fillin()
+            l1_gas = l1_calldata = l1_txs = fillin()
         else:
             l1_gas = gas_cell_text(e1, l1_cell)
-            calldata_mean = cell_num(e1, l1_cell, "calldata_bytes_mean")
-            l1_calldata = fmt_int(calldata_mean)
-
-        # Transactions per anchoring (reviewer R1-5). DERIVED, not the old
-        # column: that one printed tx_count_n, the number of REPETITIONS,
-        # and the underlying tx_count field is a hardcoded literal. This
-        # reads aggregate.add_tx_provenance(), which counts DISTINCT
-        # tx_hash values per repetition.
-        if variant_id == "baseline":
-            l1_txs = NOT_APPLICABLE
-        else:
+            l1_calldata = fmt_int(cell_num(e1, l1_cell, "calldata_bytes_mean"))
+            # DERIVED count of distinct tx_hash per repetition, not the
+            # harness's hardcoded tx_count and not tx_count_n (which is N).
             per_op = cell_num(e1, l1_cell, "tx_per_operation")
             l1_txs = fmt_int(per_op) if per_op is not None else fillin()
+        anchor_lines.append(f"{label} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\")
 
-        lines.append(
-            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\"
-        )
+    l2_body = "\n".join(l2_lines)
+    anchor_body = "\n".join(anchor_lines)
 
-    body = "\n".join(lines)
-    baseline_variant = (commit_cost or {}).get("baseline_variant", "CommitBaseline")
+    baseline_variant = (commit_cost or {}).get("baseline_variant", "baseline")
     epsilon_pct = (commit_cost or {}).get("epsilon_pct")
     epsilon_note = f"$\\epsilon={epsilon_pct:g}\\%$ of {latex_escape(baseline_variant)}'s mean gas (paired TOST)" if epsilon_pct is not None else fillin("epsilon")
-    # This note deliberately keeps its math ($\\Delta$, \\text{}) instead of
+    # This note deliberately keeps its math ($\Delta$, \text{}) instead of
     # being escaped wholesale: the markup is intentional, not data. Every
-    # value that DOES come from data (baseline_variant, epsilon_note) is
-    # escaped at its own source above.
+    # value that DOES come from data is escaped at its own source above.
     delta_note = (
         "Paired per (n, repetition, seed): "
         f"$\\Delta = \\text{{gas}}(\\text{{variant}}) - \\text{{gas}}(\\text{{{latex_escape(baseline_variant)}}})$ "
@@ -553,68 +548,74 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
         "equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on "
         f"$\\Delta$, never on absolute gas. {epsilon_note}."
     )
-    baseline_note = latex_escape(
-        "The baseline variant commits no digest, so it anchors nothing: its L1 "
-        "cells carry a dash rather than a number because the quantity does not "
-        "exist, not because it was not measured."
+    l2_notes = table_notes(
+        delta_note,
+        NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in l2_body else "",
     )
 
+    baseline_note = latex_escape(
+        "The baseline variant commits no digest, so it anchors nothing: its cells "
+        "carry a dash rather than a number because the quantity does not exist, not "
+        "because it was not measured."
+    )
     # The slot_init figure is looked up, not named: whichever variant
     # anchored first owns the campaign's only cold-write observation, and
     # that is a property of run order, not of the variant.
     init_cells = sorted(k for k in e1 if "l1_anchor" in k and k.endswith(".slot_init"))
-    if init_cells:
-        init_gas = cell_num(e1, init_cells[0], "gas_used_mean")
-        init_n = cell_num(e1, init_cells[0], "gas_used_n")
-    else:
-        init_gas = init_n = None
-    if init_gas is not None:
-        slot_note = latex_escape(
-            "L1 anchoring is reported for slot_update. The campaign contains exactly "
-            f"{fmt_int(init_n)} slot_init observation, the first anchoring of the run, at "
-            f"{fmt_int(init_gas)} gas. The difference is the one-off cost of writing a "
-            "storage slot that was still zero, paid once for the lifetime of the "
-            "deployment; it belongs to whichever variant happened to anchor first, not "
-            "to its commitment scheme, so pooling it would overstate that variant's "
-            "cost and its variance. The remaining 24 gas of spread between repetitions "
-            "is calldata, not computation: two of the 68 bytes are zero in one "
-            "repetition, and a zero calldata byte costs 4 gas instead of 16."
-        )
-    else:
-        slot_note = ""
-
+    init_gas = cell_num(e1, init_cells[0], "gas_used_mean") if init_cells else None
+    init_n = cell_num(e1, init_cells[0], "gas_used_n") if init_cells else None
+    slot_note = latex_escape(
+        f"Gas is reported for slot_update. The campaign contains exactly {fmt_int(init_n)} "
+        f"slot_init observation, the first anchoring of the run, at {fmt_int(init_gas)} gas. "
+        "The difference is the one-off cost of writing a storage slot that was still "
+        "zero, paid once for the lifetime of the deployment; it belongs to whichever "
+        "variant happened to anchor first, not to its commitment scheme, so pooling it "
+        "would overstate that variant's cost and its variance. The remaining 24 gas of "
+        "spread between repetitions is calldata, not computation: two of the 68 bytes "
+        "are zero in one repetition, and a zero calldata byte costs 4 gas instead of 16."
+    ) if init_gas is not None else ""
     tx_note = latex_escape(
-        "L1 txs per anchoring is counted from the distinct transaction hashes each "
-        "cell recorded, not from the harness's tx_count field, which is a hardcoded "
-        "constant. Every anchoring repetition produced its own hash, and all of them "
-        "have a retrievable Sepolia receipt with success status, each in its own "
-        "block: one submitBlock transaction per anchoring, for every variant."
+        "L1 txs per anchoring is counted from the distinct transaction hashes each cell "
+        "recorded, not from the harness's tx_count field, which is a hardcoded constant. "
+        "Every anchoring repetition produced its own hash, and all of them have a "
+        "retrievable Sepolia receipt with success status, each in its own block: one "
+        "submitBlock transaction per anchoring, for every variant."
     )
+    anchor_notes = table_notes(baseline_note, slot_note, tx_note)
 
-    notes = table_notes(
-        delta_note,
-        baseline_note,
-        slot_note,
-        tx_note,
-        NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "",
-    )
     return f"""\\begin{{table*}}[!t]
-\\caption{{Block Commitment Cost per Variant: L2 Construction, Net of Baseline, and L1 Anchoring (mean $\\pm$ SD)}}
+\\caption{{L2 Block Construction Cost per Variant: Absolute Gas and Net of Baseline (mean $\\pm$ SD)}}
 \\label{{tab:commit-cost}}
+\\centering
+\\scriptsize
+\\setlength{{\\tabcolsep}}{{3pt}}
+\\begin{{tabular}}{{@{{}}lrrrrrr@{{}}}}
+\\toprule
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} \\\\
+\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}
+\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ \\\\
+\\midrule
+{l2_body}
+\\bottomrule
+\\end{{tabular}}
+{l2_notes}
+\\end{{table*}}
+
+\\begin{{table}}[!t]
+\\caption{{L1 Anchoring Cost per Variant (\\texttt{{submitBlock}}, $n=100$, slot\\_update)}}
+\\label{{tab:anchor-cost}}
 \\centering
 \\footnotesize
 \\setlength{{\\tabcolsep}}{{4pt}}
-\\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
+\\begin{{tabular}}{{@{{}}lrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$, slot\\_update)}} \\\\
-\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
-\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs per anchoring \\\\
+\\textbf{{Variant}} & \\textbf{{gas}} & \\textbf{{calldata (B)}} & \\textbf{{L1 txs per anchoring}} \\\\
 \\midrule
-{body}
+{anchor_body}
 \\bottomrule
 \\end{{tabular}}
-{notes}
-\\end{{table*}}
+{anchor_notes}
+\\end{{table}}
 """
 
 

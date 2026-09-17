@@ -32,7 +32,7 @@ frozen at tag time).
 - Foundry (`forge`, `cast`, `anvil`) — `curl -L https://foundry.paradigm.xyz | bash && foundryup`
 - Node.js 18+ and the repo's npm packages: `npm install`
 - Python 3.11+ with a venv for `analysis/`: `python3 -m venv .venv && .venv/bin/pip install -r analysis/requirements.txt`
-- `.env` (gitignored) with `SEPOLIA_RPC_URL` and `OPERATOR_PRIVATE_KEY` set, for the E1/E2 L1 portions
+- `.env` (gitignored) with `ETH_RPC_URL` and `OPERATOR_PRIVATE_KEY` set, for the E1/E2 L1 portions
 - Sepolia testnet ETH in the operator account (see "Sepolia ETH needed" below)
 - `.env.paper1` already ships sane defaults (`N_REPS=30`, `ACCOUNTS_K=20`, `BATCH_B=100`, etc. — docs/EXPERIMENT_PRD.md §3-§6) — override there, not inline, so every run's parameters stay traceable to one file
 
@@ -54,7 +54,7 @@ make anvil           # separate terminal: local L2 node for E1/E2's L2 portion a
                       #   Leave it running; Ctrl-C stops Anvil.
 
 make e1               # bench/e1_commit_cost.ts -- add --dry-run first to smoke-test without
-make e2               #   touching Sepolia; the real run needs SEPOLIA_RPC_URL funded
+make e2               #   touching Sepolia; the real run needs ETH_RPC_URL funded
 make e3               # bench/e3_throughput.ts -- full campaign is >=600 runs (docs/TICKETS.md
                       #   T7); CLAUDE.md's execution-economy rule: don't run it unprompted
 
@@ -284,7 +284,11 @@ PLASMA_CHAIN_UTXO_MERKLE_ADDRESS=
 L2_PLASMA_TOKEN_ADDRESS=
 
 # L1 (Sepolia)
-L1_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+# The ONE variable that carries the L1 endpoint. Keep it in .env only:
+# never pass an RPC URL as a --rpc-url argument, because command lines
+# are visible to every user on the machine through `ps`. Foundry's cast
+# and forge read this name from the environment on their own.
+ETH_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
 ROOT_CHAIN_UTXO_ADDRESS=
 ```
 

@@ -58,7 +58,13 @@ interface LoadTestResult {
  */
 function loadConfig(): LoadTestConfig {
   const l2RpcUrl = process.env.L2_RPC_URL || 'http://localhost:8545';
-  const l1RpcUrl = process.env.L1_RPC_URL || 'https://sepolia.infura.io/v3/8d3bb3446dad413c87e02f1dc98a17b5';
+  // KREDENSIAL DIHAPUS: nilai fallback di bawah dulunya kunci privat/URL RPC
+  // yang ter-commit. Kunci lama sudah dinonaktifkan dan dananya dipindahkan;
+  // nilainya kini wajib datang dari environment, tanpa fallback.
+  const l1RpcUrl = process.env.ETH_RPC_URL;
+  if (!l1RpcUrl) {
+    throw new Error('Missing required env var: ETH_RPC_URL');
+  }
   const senderPrivateKey = process.env.L2_OPERATOR_PRIVATE_KEY as `0x${string}`;
   const accountCount = parseInt(process.env.TEST_LOAD_ACCOUNTS || '5');
   const transactionsPerAccount = parseInt(process.env.TEST_LOAD_TX_PER_ACCOUNT || '10');
