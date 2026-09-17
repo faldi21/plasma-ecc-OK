@@ -315,8 +315,127 @@ blok. Ini **dinyatakan sebagai konfigurasi pengukuran di bagian metode
 paper**, bukan disembunyikan — angka throughput E3 harus dibaca sebagai
 throughput di bawah konfigurasi ini, bukan sebagai batas atas sistem.
 
+## Amandemen 4 — venue pengukuran dipisahkan dari layer protokol
+
+*Ditambahkan 2026-09-17, **setelah** kampanye selesai dan kedua dataset
+dibekukan.* Amandemen ini **tidak mengubah satu pun uji statistik, margin
+ekuivalensi, daftar kontras, atau nilai terukur** (IRON RULE 6). Yang
+diubah hanya **pelabelan di lapisan turunan** dan **aturan pemeriksaan
+D6**. Data mentah tidak disentuh sama sekali.
+
+### Temuan
+
+Sepuluh record `e2.finalizeExit.slot_init` / `e2.finalizeExit.slot_update`
+berlabel `layer: "L1"` ternyata **tidak diukur di Sepolia**, melainkan di
+Anvil lokal. Buktinya di record itu sendiri: `block_number` bernilai
+**107–108**, sementara seluruh record L1 lain berada di blok
+**11.716.205–11.718.467**; `cast tx` atas hash-hash tersebut menjawab
+`tx not found` di Sepolia; jarak antar-record ~1,6 detik, mustahil untuk
+blok Sepolia ~12 detik.
+
+Sebabnya sah dan memang terdokumentasi di docblock fungsi dan di field
+`notes` tiap record: `finalizeExit` menuntut `evm_increaseTime` melewati
+`EXIT_PERIOD`, yang tidak mungkin dilakukan di jaringan publik mana pun.
+
+Empat pasang **hash kembar** di antara sepuluh record itu adalah
+**konsekuensi wajar dari isolasi snapshot/revert di chain lokal**, bukan
+pemakaian ulang hash dan bukan repetisi yang dilewati pengirimannya:
+setiap repetisi dibungkus `evm_snapshot`/`evm_revert`, sehingga nonce,
+`to`, calldata, dan gas limit identik; ECDSA Ethereum deterministik
+(RFC 6979), jadi transaksi tertandatangani identik bit-per-bit dan
+hash-nya pun identik. Transaksi baru tetap benar-benar dikirim pada setiap
+repetisi — `tx_hash` dan `gas_used` tiap record berasal dari panggilan
+`writeContract` dan receipt-nya sendiri, tanpa cabang dan tanpa cache.
+
+Gas **88.723 identik di kesepuluh record** menunjukkan biaya
+`finalizeExit` memang deterministik. **N=5 per sel tetap sah dengan
+varians nol**: nol di sini adalah sifat operasi yang diukur, bukan gejala
+sampel yang rusak.
+
+### Keputusan
+
+Tidak diukur ulang. Tidak ada record dibuang. Tidak ada salt ditambahkan
+ke dataset yang sudah beku. Yang diperbaiki adalah pelabelan venue dan
+aturan D6.
+
+### Aturan turunan `venue` (normatif)
+
+`analysis/common.py::venue_of()` menurunkan field baru `venue` untuk setiap
+record. Field `layer` di `data/raw/` **tidak diubah**. Aturannya:
+
+1. `block_number >= 1.000.000` → `venue = "sepolia"`; selain itu →
+   `venue = "local"`. Record tanpa `block_number` sama sekali (eksekusi uji
+   Foundry E4) → `"local"`, karena forge menjalankannya di EVM
+   in-process.
+2. **Korroborasi wajib, bukan opsional.** Record ber-`venue` `"local"`
+   yang `layer`-nya `"L1"` dan punya `tx_hash` **harus** menjelaskan di
+   `notes`-nya kenapa ia berjalan di luar jaringan publik (penanda:
+   `local anvil`, `local devnet`, atau `not sepolia`). Record ber-`venue`
+   `"sepolia"` **tidak boleh** mengaku lokal di `notes`. Kalau kedua
+   sinyal bertentangan, fungsi ini **melempar `VenueConflict`** — tidak
+   menebak, tidak memilih salah satu sinyal. Dataset sudah beku, jadi
+   pertentangan berarti **aturannya** yang salah dan harus diturunkan
+   ulang, bukan record yang diam-diam dipindah kelas.
+3. Record `layer: "L2"` tidak dituntut penjelasan: seluruh L2 yang
+   dievaluasi memang devnet Anvil (docs/EXPERIMENT_PRD.md §2.1), jadi
+   lokal secara konstruksi.
+4. `cell_venue()` menolak satu sel yang **bercampur** venue, karena
+   rata-ratanya akan menggabungkan dua chain berbeda menjadi satu angka.
+
+Ambang 1.000.000 tidak dapat disetel-setel: Sepolia berada di blok ≈11,72
+juta saat kampanye berjalan (2026-09-16) dan Anvil selalu mulai dari blok
+0. Dalam kedua dataset, **tidak ada satu pun record di antara blok 1.170
+dan 11.716.074** — kedua populasi terpisah empat orde besaran.
+
+Terapan pada dataset beku: **120 record `venue=sepolia`**, **10 record
+`venue=local` ber-`layer` L1**, 5 record E4 di luar cakupan, dan 1.170
+(+600 di dataset E3) record L2 yang lokal secara konstruksi.
+
+### D6 dikaitkan ke venue
+
+`scripts/verify.sh` D6 tidak lagi menuntut receipt untuk semua record L1:
+
+- `venue = "sepolia"` → wajib punya `tx_hash` sah **dan** receipt di
+  `data/receipts/<RUN_ID>/<hash>.json`.
+- `venue = "local"` → receipt mustahil diambil (chain-nya sudah tidak
+  ada), jadi yang diperiksa adalah yang memang bisa diperiksa: record
+  punya `block_number`, punya `gas_used`, dan `notes`-nya menjelaskan
+  kenapa pengukurannya lokal.
+- Record E4 tetap di luar D6 (bukan transaksi chain sama sekali).
+
+Ringkasan verify **selalu mencetak jumlah record per venue**, lolos atau
+tidak, supaya angka itu terlihat dan tidak tersembunyi di balik status
+PASS.
+
+### Tabel memisahkan keduanya
+
+`tab_op_gas.tex` blok L1 mendapat **kolom `Venue`** yang nilainya dibaca
+dari kolom `venue` di CSV agregat — bukan ditulis tangan di
+`make_tables.py`. Caption tabel L2 menyatakan venue-nya, juga diturunkan
+dari data. Catatan kaki menjelaskan bahwa `finalizeExit` diukur di devnet
+lokal karena memerlukan pemajuan waktu melewati masa tantangan exit.
+Pembaca dapat melihat perbedaan itu tanpa membuka data mentah.
+
+### Cacat yang tersingkap, untuk kampanye berikutnya
+
+Dicatat di sini supaya tidak hilang; **tidak** diperbaiki pada dataset yang
+sudah beku:
+
+1. Penjaga duplikat `tx_hash` di `bench/harness/record.ts` hanya memeriksa
+   `record.layer === "L2"`, sehingga sepuluh record `layer: "L1"` ini lolos
+   tanpa peringatan sama sekali.
+2. Perbaikan salt `maxPriorityFeePerGas` yang dulu dibuat untuk cacat
+   provenance tx di E1 hanya diterapkan ke `bench/e1_commit_cost.ts` dan
+   **tidak pernah dibawa** ke jalur `finalizeExit` di `bench/e2_sync_gas.ts`.
+
 ## Riwayat perubahan
 
+- 2026-09-17: Amandemen 4 ditambahkan — venue pengukuran (`sepolia` /
+  `local`) diturunkan terpisah dari `layer` protokol; D6 dikaitkan ke
+  venue; `tab_op_gas` menandai venue tiap operasi. Dipicu temuan sepuluh
+  record `e2.finalizeExit` berlabel L1 yang ternyata diukur di Anvil.
+  Ditulis **setelah** kampanye; tidak mengubah uji, margin, kontras, atau
+  nilai terukur mana pun — hanya pelabelan turunan dan aturan pemeriksaan.
 - 2026-09-17: Amandemen 3 ditambahkan — flush eksplisit satu kali setelah
   batch terakhir tiap run (cacat auto-mine tanpa transaksi penerus),
   seragam di semua sel dan nilai T. `TRANSFER_BATCH_GAS` sengaja tidak

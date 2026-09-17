@@ -34,6 +34,99 @@ OK_STATUSES = {"ok", "pass"}
 # change n_failed/n_ok counting, which is still driven by `status` alone.
 BATCH_TIMEOUT_NOTE_MARKER = "batch_timeout"
 
+# ---------------------------------------------------------------- venue
+#
+# ANALYSIS_PLAN.md Amandemen 4. A record's `layer` field says which layer
+# of the PROTOCOL an operation belongs to ("L1" = a RootChainUTXO.sol
+# operation). It does NOT say where the measurement was actually executed.
+# Ten e2.finalizeExit records carry layer="L1" but were measured on a
+# local Anvil devnet, because finalizeExit requires evm_increaseTime past
+# EXIT_PERIOD, which no public network can do.
+#
+# `venue` is that missing distinction, derived here and never written back
+# to data/raw/ (IRON RULE 2). The rule, in full:
+#
+#   1. A record with block_number >= SEPOLIA_MIN_BLOCK was measured on
+#      Sepolia; anything else was measured locally.
+#   2. Corroboration is REQUIRED, not optional: a record classified
+#      "local" that carries a tx_hash must also say so in `notes`, and a
+#      record classified "sepolia" must not claim to be local. If the two
+#      signals disagree, venue_of() raises instead of guessing.
+#
+# Why the threshold is unambiguous rather than a tuning knob: Sepolia was
+# at block ~11,716,000 when this campaign ran (2026-09-16) and a fresh
+# Anvil devnet starts at block 0. The campaign's own numbers are blocks
+# 15..11,718,467, with nothing at all between 1,170 and 11,716,074 -- the
+# two populations are separated by four orders of magnitude, so no record
+# sits anywhere near the threshold.
+SEPOLIA_MIN_BLOCK = 1_000_000
+
+VENUE_SEPOLIA = "sepolia"
+VENUE_LOCAL = "local"
+
+# Substrings that count as a record admitting, in its own `notes`, that it
+# was measured off the public network.
+_LOCAL_NOTE_MARKERS = ("local anvil", "local devnet", "not sepolia")
+
+
+class VenueConflict(Exception):
+    """block_number and notes disagree about where a record ran. Never
+    resolved by preferring one signal: the dataset is frozen, so a
+    conflict means the RULE is wrong and must be re-derived, not that a
+    record should be quietly reclassified."""
+
+
+def venue_of(record: dict[str, Any]) -> str:
+    """Where this record was actually measured: VENUE_SEPOLIA or
+    VENUE_LOCAL. Records with no block_number at all (E4 Foundry test
+    executions) are local: forge runs them in its own in-process EVM."""
+    block_number = record.get("block_number")
+    notes = (record.get("notes") or "").lower()
+    claims_local = any(marker in notes for marker in _LOCAL_NOTE_MARKERS)
+
+    if block_number is None:
+        venue = VENUE_LOCAL
+    elif block_number >= SEPOLIA_MIN_BLOCK:
+        venue = VENUE_SEPOLIA
+    else:
+        venue = VENUE_LOCAL
+
+    if venue == VENUE_SEPOLIA and claims_local:
+        raise VenueConflict(
+            f"{record.get('cell_id')} rep{record.get('repetition')}: block_number="
+            f"{block_number} says Sepolia but notes says local -- {notes!r}"
+        )
+    # The note is only DEMANDED where running locally is surprising: a
+    # layer="L1" operation, which the reader would otherwise assume ran on
+    # the public network. L2 records are local by construction -- the
+    # entire evaluated L2 is an Anvil devnet (docs/EXPERIMENT_PRD.md
+    # SS2.1) -- so they need no per-record excuse.
+    if (
+        venue == VENUE_LOCAL
+        and record.get("layer") == "L1"
+        and record.get("tx_hash")
+        and not claims_local
+    ):
+        raise VenueConflict(
+            f"{record.get('cell_id')} rep{record.get('repetition')}: block_number="
+            f"{block_number} says local and the record has a tx_hash, but notes "
+            f"does not explain why this L1 operation ran off-network -- {notes!r}"
+        )
+    return venue
+
+
+def cell_venue(records: list[dict[str, Any]]) -> str:
+    """The venue of a whole cell. Raises if one cell mixes venues: that
+    would make its mean a mean over two different chains, which no table
+    should ever print as a single number."""
+    venues = sorted({venue_of(r) for r in records})
+    if len(venues) > 1:
+        raise VenueConflict(
+            f"{records[0].get('cell_id')}: satu sel bercampur venue {venues} -- "
+            "rata-ratanya akan menggabungkan dua chain berbeda"
+        )
+    return venues[0]
+
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     records = []

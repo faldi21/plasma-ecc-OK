@@ -518,6 +518,31 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
 # ---------------------------------------------------------------- tab_op_gas.tex
 
 
+# Rendered form of the `venue` column aggregate.py derives (common.
+# venue_of(), ANALYSIS_PLAN.md Amandemen 4). Read from the CSV, never
+# hardcoded here: which cells ran off-network is a property of the
+# measurement, not a fact this script is allowed to assert.
+VENUE_LABELS = {"sepolia": "Sepolia", "local": "local devnet"}
+
+FOOTNOTE_VENUE = (
+    "\\footnote{Venue is where the measurement was executed, not which protocol "
+    "layer the operation belongs to. All rows are RootChainUTXO.sol (L1) "
+    "operations, but \\texttt{finalizeExit} was measured on a local devnet because "
+    "it requires advancing time past the exit challenge period, which is not "
+    "possible on a public network; every other row was measured on Sepolia. "
+    "The two venues share the same EVM semantics and gas schedule, so the gas "
+    "figures remain comparable, but they are not the same chain and are labelled "
+    "as such rather than silently pooled.}"
+)
+
+
+def _venue_text(cells: dict[str, dict[str, str]], cell_id: str) -> str:
+    venue = (cells.get(cell_id) or {}).get("venue")
+    if not venue:
+        return fillin()
+    return VENUE_LABELS.get(venue, venue)
+
+
 def _op_gas_ratio_text(e2: dict[str, dict[str, str]], asc_cell: str, merkle_cell: str) -> str:
     asc_mean = cell_num(e2, asc_cell, "gas_used_mean")
     merkle_mean = cell_num(e2, merkle_cell, "gas_used_mean")
@@ -545,17 +570,47 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
             ratio_text = _op_gas_ratio_text(e2, asc_cell, merkle_cell)
             block_a_lines.append(f"\\texttt{{{fn}}} ({state_label}) & {merkle_text} & {asc_text} & {ratio_text} \\\\")
     block_a_body = "\n".join(block_a_lines)
+    # Block A is uniform in venue in every campaign so far (the evaluated
+    # L2 is an Anvil devnet), so the caption states it once instead of
+    # repeating a constant column. Derived, not asserted: if a future
+    # campaign ever mixes venues here, the caption says so rather than
+    # printing a claim that has quietly stopped being true.
+    block_a_venues = sorted(
+        {
+            v
+            for fn in E2_FUNCTIONS_L2_BOTH_SYSTEMS
+            for state in ("slot_init", "slot_update")
+            for system in ("asc", "merkle")
+            for v in [(e2.get(f"e2.{system}.{fn}.{state}") or {}).get("venue")]
+            if v
+        }
+    )
+    if len(block_a_venues) == 1:
+        block_a_venue_note = (
+            f" All rows measured on {VENUE_LABELS.get(block_a_venues[0], block_a_venues[0])}."
+        )
+    elif block_a_venues:
+        block_a_venue_note = (
+            " Rows span more than one measurement venue ("
+            + ", ".join(VENUE_LABELS.get(v, v) for v in block_a_venues)
+            + "); see the L1 table's venue column for the distinction."
+        )
+    else:
+        block_a_venue_note = ""
 
     block_b_lines = []
     for fn in E2_FUNCTIONS_L1_ASC_ONLY:
         for state, state_label in [("slot_init", "slot\\_init"), ("slot_update", "slot\\_update")]:
             asc_cell = f"e2.{fn}.{state}"
             asc_text = gas_cell_text(e2, asc_cell)
-            block_b_lines.append(f"\\texttt{{{fn}}} ({state_label}) & {asc_text} \\\\")
+            venue_text = _venue_text(e2, asc_cell)
+            block_b_lines.append(
+                f"\\texttt{{{fn}}} ({state_label}) & {asc_text} & {venue_text} \\\\"
+            )
     block_b_body = "\n".join(block_b_lines)
 
     return f"""\\begin{{table*}}[!t]
-\\caption{{Gas per Operation, L2 (Both Systems), slot\\_init versus slot\\_update (mean $\\pm$ SD)}}
+\\caption{{Gas per Operation, L2 (Both Systems), slot\\_init versus slot\\_update (mean $\\pm$ SD).{block_a_venue_note}}}
 \\label{{tab:op-gas-l2}}
 \\centering
 \\scriptsize
@@ -570,14 +625,14 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
 \\end{{table*}}
 
 \\begin{{table}}[!t]
-\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD)\\footnote{{The evaluated artifact does not include a Merkle-based RootChain contract, so L1 cost is reported as an absolute figure for the ASC deployment only, not as a cross-primitive comparison -- a deliberate scope limit (docs/EXPERIMENT\\_PRD.md \\S5), not an unmeasured gap.}}}}
+\\caption{{Gas per Operation, L1 (ASC Deployment Only), slot\\_init versus slot\\_update (mean $\\pm$ SD)\\footnote{{The evaluated artifact does not include a Merkle-based RootChain contract, so L1 cost is reported as an absolute figure for the ASC deployment only, not as a cross-primitive comparison -- a deliberate scope limit (docs/EXPERIMENT\\_PRD.md \\S5), not an unmeasured gap.}}{FOOTNOTE_VENUE}}}
 \\label{{tab:op-gas-l1}}
 \\centering
 \\scriptsize
 \\setlength{{\\tabcolsep}}{{3pt}}
-\\begin{{tabular}}{{@{{}}lr@{{}}}}
+\\begin{{tabular}}{{@{{}}lrl@{{}}}}
 \\toprule
-\\textbf{{Operation (slot state)}} & \\textbf{{ASC gas}} \\\\
+\\textbf{{Operation (slot state)}} & \\textbf{{ASC gas}} & \\textbf{{Venue}} \\\\
 \\midrule
 {block_b_body}
 \\bottomrule

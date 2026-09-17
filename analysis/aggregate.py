@@ -41,7 +41,14 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import OK_STATUSES, describe, find_run_jsonl_files, read_jsonl, status_breakdown
+from common import (
+    OK_STATUSES,
+    cell_venue,
+    describe,
+    find_run_jsonl_files,
+    read_jsonl,
+    status_breakdown,
+)
 
 ALPHA = 0.05
 
@@ -62,6 +69,12 @@ SCALAR_METRIC_FIELDS = [
 BASE_COLUMNS = [
     "cell_id",
     "layer",
+    # Where the measurement actually ran, derived by common.venue_of()
+    # (ANALYSIS_PLAN.md Amandemen 4). Distinct from `layer`: a layer="L1"
+    # cell can still have venue="local" when the operation needs a cheat
+    # code no public network offers. Derived here so that make_tables.py
+    # can LABEL the distinction without hardcoding which cells are which.
+    "venue",
     "function",
     "n_elements",
     "n_total",
@@ -103,6 +116,7 @@ def base_row(cell_id: str, records: list[dict[str, Any]], ok_records: list[dict[
     return {
         "cell_id": cell_id,
         "layer": first.get("layer"),
+        "venue": cell_venue(records),
         "function": first.get("function"),
         "n_elements": first.get("n_elements"),
         "n_total": len(records),

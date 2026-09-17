@@ -181,34 +181,83 @@ else
 fi
 
 # ---------------------------------------------------------------- D6
-hdr "D6  Semua angka L1 punya receipt yang bisa ditelusuri"
+hdr "D6  Setiap angka L1 bisa ditelusuri sesuai venue pengukurannya"
 if [[ -d "$RAW" ]]; then
   python3 - "$RECEIPTS" "${RAW_DIRS[@]}" <<'PY'
 import glob, json, os, re, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(".")), "analysis"))
+sys.path.insert(0, "analysis")
+from common import VENUE_LOCAL, VENUE_SEPOLIA, VenueConflict, venue_of
+
 rcp = sys.argv[1]
 raw_dirs = sys.argv[2:]
-pat = re.compile(r"^0x[0-9a-fA-F]{64}$"); bad = 0; n = 0
+pat = re.compile(r"^0x[0-9a-fA-F]{64}$")
+bad = 0
+n_sepolia = n_local = n_e4 = 0
+
 for path in [p for d in raw_dirs for p in glob.glob(f"{d}/*.jsonl")]:
     for ln, line in enumerate(open(path), 1):
         line = line.strip()
-        if not line: continue
+        if not line:
+            continue
         rec = json.loads(line)
-        if rec.get("layer") != "L1": continue
+        if rec.get("layer") != "L1":
+            continue
         # E4 (bench/e4_exploits.ts) records are Foundry test executions,
-        # not real network transactions -- layer="L1" there means "this
-        # test exercises L1 contract logic", not "this is a traceable
-        # Sepolia tx". They never have a real tx_hash and are not what D6
-        # is checking for (caught testing this script: every real
-        # campaign's e4_exploits.jsonl would otherwise fail D6 forever).
-        if str(rec.get("cell_id", "")).startswith("e4."): continue
-        n += 1
-        h = rec.get("tx_hash")
-        if not h or not pat.match(h):
-            print(f"  \033[31mFAIL\033[0m  record L1 tanpa tx_hash sah: {path}:{ln}"); bad += 1; continue
-        if os.path.isdir(rcp) and not os.path.exists(os.path.join(rcp, h + ".json")):
-            print(f"  \033[31mFAIL\033[0m  receipt hilang untuk {h}"); bad += 1
-if n == 0: print("  \033[33mSKIP\033[0m  belum ada record L1")
-elif bad == 0: print(f"  \033[32mPASS\033[0m  {n} record L1, semua punya tx_hash dan receipt")
+        # not chain measurements at all -- layer="L1" there means "this
+        # test exercises L1 contract logic". They have no tx_hash, no
+        # block_number and no gas_used, so NEITHER venue branch below can
+        # say anything about them; they are counted and reported, not
+        # silently dropped.
+        if str(rec.get("cell_id", "")).startswith("e4."):
+            n_e4 += 1
+            continue
+        try:
+            venue = venue_of(rec)
+        except VenueConflict as exc:
+            print(f"  \033[31mFAIL\033[0m  venue tidak bisa ditentukan: {path}:{ln}: {exc}")
+            bad += 1
+            continue
+
+        if venue == VENUE_SEPOLIA:
+            # Measured on the public network: the receipt is retrievable
+            # by anyone, so it must be on disk.
+            n_sepolia += 1
+            h = rec.get("tx_hash")
+            if not h or not pat.match(h):
+                print(f"  \033[31mFAIL\033[0m  record sepolia tanpa tx_hash sah: {path}:{ln}")
+                bad += 1
+                continue
+            if os.path.isdir(rcp) and not os.path.exists(os.path.join(rcp, h + ".json")):
+                print(f"  \033[31mFAIL\033[0m  receipt hilang untuk {h}")
+                bad += 1
+        else:
+            # Measured on a local devnet that no longer exists, so no
+            # receipt can ever be fetched (ANALYSIS_PLAN.md Amandemen 4).
+            # What CAN be checked is that the record is self-describing:
+            # it names its block and its cost, and says why it ran locally.
+            n_local += 1
+            if rec.get("block_number") is None:
+                print(f"  \033[31mFAIL\033[0m  record lokal tanpa block_number: {path}:{ln}")
+                bad += 1
+            if rec.get("gas_used") is None:
+                print(f"  \033[31mFAIL\033[0m  record lokal tanpa gas_used: {path}:{ln}")
+                bad += 1
+            if not (rec.get("notes") or "").strip():
+                print(f"  \033[31mFAIL\033[0m  record lokal tanpa notes penjelas: {path}:{ln}")
+                bad += 1
+
+total = n_sepolia + n_local
+# Printed unconditionally: the split is the finding, and burying it behind
+# a PASS is exactly what Amandemen 4 exists to prevent.
+print(f"  venue sepolia : {n_sepolia} record (wajib punya receipt)")
+print(f"  venue local   : {n_local} record (diperiksa block_number+gas_used+notes)")
+print(f"  E4 (uji forge): {n_e4} record (bukan transaksi chain, di luar D6)")
+if total == 0:
+    print("  \033[33mSKIP\033[0m  belum ada record L1")
+elif bad == 0:
+    print(f"  \033[32mPASS\033[0m  {total} record L1 lolos aturan venue-nya masing-masing")
 sys.exit(1 if bad else 0)
 PY
   [[ $? -eq 0 ]] || fail=$((fail+1))
