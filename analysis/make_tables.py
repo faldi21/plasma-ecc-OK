@@ -108,6 +108,13 @@ def latex_escape(s: Any) -> str:
 # blok").
 EXCEEDS_BLOCK_LIMIT_LABEL = "exceeds block gas limit"
 
+# "--" means the quantity DOES NOT APPLY, and is deliberately distinct
+# from \fillin{}, which means "a number that should exist and is
+# missing". D1 fails on \fillin and ignores "--" precisely because the
+# two are different claims: an em dash is an answer, a \fillin is an
+# unanswered question.
+NOT_APPLICABLE = "--"
+
 def table_notes(*notes: str) -> str:
     """Table notes rendered INSIDE the float but OUTSIDE the tabular.
 
@@ -165,15 +172,26 @@ E2_FUNCTIONS_L2_BOTH_SYSTEMS = [
 # EXPERIMENT_PRD.md §5's own explicit, deliberate scope note) -- Block B
 # never gets a Merkle or ASC/Merkle-ratio column, by design, not because
 # the measurement is missing.
+# (cell key, displayed label). The key is what gets looked up as
+# e2.<key>.<slot state>; the label is what the reader sees.
+#
+# batchSyncUtxoSpent is PARAMETERIZED BY n, so it was recorded as
+# e2.batchSyncUtxoSpent.n{10,50,100}.slot_* and a lookup for a bare
+# "e2.batchSyncUtxoSpent.slot_init" found nothing -- the measurements
+# existed all along and the table printed \fillin{} over them. It gets
+# one row per n rather than a single chosen n, because how the cost
+# scales with n is the finding.
 E2_FUNCTIONS_L1_ASC_ONLY = [
-    "deposit",
-    "depositETH",
-    "syncUtxoSpent",
-    "batchSyncUtxoSpent",
-    "updateUtxoBlock",
-    "registerExitUtxo",
-    "startExit",
-    "finalizeExit",
+    ("deposit", "deposit"),
+    ("depositETH", "depositETH"),
+    ("syncUtxoSpent", "syncUtxoSpent"),
+    ("batchSyncUtxoSpent.n10", "batchSyncUtxoSpent (n=10)"),
+    ("batchSyncUtxoSpent.n50", "batchSyncUtxoSpent (n=50)"),
+    ("batchSyncUtxoSpent.n100", "batchSyncUtxoSpent (n=100)"),
+    ("updateUtxoBlock", "updateUtxoBlock"),
+    ("registerExitUtxo", "registerExitUtxo"),
+    ("startExit", "startExit"),
+    ("finalizeExit", "finalizeExit"),
 ]
 
 E3_CELLS = [
@@ -378,7 +396,17 @@ def build_tab_params(data_root: Path, run_id: str) -> str:
     rows = [
         ("\\texttt{EXIT\\_PERIOD}", exit_period),
         ("\\texttt{CHALLENGE\\_PERIOD}", challenge_period),
-        ("L2 block interval", fillin("value or trigger rule")),
+        # Not a measurement and not a configured value: E3 never calls
+        # createBlock at all (bench/e3_throughput.ts), and no interval is
+        # set anywhere in .env.paper1. Saying so is the honest answer; the
+        # paper makes no end-to-end throughput claim that would need one.
+        (
+            "L2 block interval",
+            latex_escape(
+                "not applicable (blocks are created on demand; no fixed interval "
+                "is configured)"
+            ),
+        ),
         ("L2 Anvil block gas limit", gas_limit_str),
         ("Solidity / optimizer", f"{solc_version}, {via_ir}, {optimizer_runs} runs"),
         ("Evaluated code version", f"{tag_text}, {commit_text}"),
@@ -435,7 +463,12 @@ def _read_foundry_solc_version() -> str:
 # ---------------------------------------------------------------- tab_commit_cost.tex
 
 
-def delta_cell_text(commit_cost: dict[str, Any] | None, variant_id: str, n: int) -> str:
+def delta_cell_text(
+    commit_cost: dict[str, Any] | None,
+    variant_id: str,
+    n: int,
+    e1: dict[str, dict[str, str]] | None = None,
+) -> str:
     """ANALYSIS_PLAN.md Amandemen 1: delta(v, n, r) = gas(v, n, r) -
     gas(baseline, n, r), from stats.json's commit_cost_deltas (computed by
     analysis/stats.py -- this function only formats, never computes, per
@@ -449,6 +482,12 @@ def delta_cell_text(commit_cost: dict[str, Any] | None, variant_id: str, n: int)
         None,
     )
     if entry is None or not entry.get("available"):
+        # A cell that ran out of gas has no gas_used to subtract from, so
+        # its delta does not exist -- that is "not applicable", not a
+        # missing measurement. The table's block-limit note already
+        # explains why.
+        if e1 is not None and cell_status(e1, f"bench.commit_{variant_id}.n{n}") == "exceeds_block_gas_limit":
+            return NOT_APPLICABLE
         return fillin()
     return fmt_delta_mean_sd(entry.get("mean_delta"), entry.get("sd_delta"), entry.get("n_pairs"))
 
@@ -460,24 +499,36 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
         n100 = gas_cell_text(e1, f"bench.commit_{variant_id}.n100")
         n1000 = gas_cell_text(e1, f"bench.commit_{variant_id}.n1000")
 
-        d10 = delta_cell_text(commit_cost, variant_id, 10)
-        d100 = delta_cell_text(commit_cost, variant_id, 100)
-        d1000 = delta_cell_text(commit_cost, variant_id, 1000)
+        d10 = delta_cell_text(commit_cost, variant_id, 10, e1)
+        d100 = delta_cell_text(commit_cost, variant_id, 100, e1)
+        d1000 = delta_cell_text(commit_cost, variant_id, 1000, e1)
 
-        l1_cell = f"e1.{variant_id}.l1_anchor.n100"
-        if variant_id == "baseline" or l1_cell not in e1:
+        # slot_update, not the pooled cell: the one slot_init observation
+        # is the contract's own one-off initialization cost and belongs to
+        # whichever variant happened to anchor first, not to its
+        # commitment scheme (aggregate.split_l1_anchor_by_slot_state).
+        # Pooling them inflated that variant's mean by 3,420 gas and its
+        # SD by ~700x.
+        l1_cell = f"e1.{variant_id}.l1_anchor.n100.slot_update"
+        if variant_id == "baseline":
+            # Baseline commits no digest, so there is nothing to anchor.
+            # Not a missing measurement -- the quantity does not exist.
+            l1_gas = NOT_APPLICABLE
+            l1_calldata = NOT_APPLICABLE
+        elif l1_cell not in e1:
             l1_gas = fillin()
             l1_calldata = fillin()
-            l1_txs = fillin()
         else:
             l1_gas = gas_cell_text(e1, l1_cell)
             calldata_mean = cell_num(e1, l1_cell, "calldata_bytes_mean")
             l1_calldata = fmt_int(calldata_mean)
-            tx_n = cell_num(e1, l1_cell, "tx_count_n")
-            l1_txs = fmt_int(tx_n)
 
+        # The "L1 txs" column is gone. It printed tx_count_n -- the number
+        # of REPETITIONS (5), not transactions -- and tx_count itself is a
+        # hardcoded literal 1 in bench/e1_commit_cost.ts, so it measured
+        # nothing either way. N is stated in the methods section.
         lines.append(
-            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} & {l1_txs} \\\\"
+            f"{label} & {n10} & {n100} & {n1000} & {d10} & {d100} & {d1000} & {l1_gas} & {l1_calldata} \\\\"
         )
 
     body = "\n".join(lines)
@@ -495,18 +546,53 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
         "equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on "
         f"$\\Delta$, never on absolute gas. {epsilon_note}."
     )
-    notes = table_notes(delta_note, NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "")
+    baseline_note = latex_escape(
+        "The baseline variant commits no digest, so it anchors nothing: its L1 "
+        "cells carry a dash rather than a number because the quantity does not "
+        "exist, not because it was not measured."
+    )
+
+    # The slot_init figure is looked up, not named: whichever variant
+    # anchored first owns the campaign's only cold-write observation, and
+    # that is a property of run order, not of the variant.
+    init_cells = sorted(k for k in e1 if "l1_anchor" in k and k.endswith(".slot_init"))
+    if init_cells:
+        init_gas = cell_num(e1, init_cells[0], "gas_used_mean")
+        init_n = cell_num(e1, init_cells[0], "gas_used_n")
+    else:
+        init_gas = init_n = None
+    if init_gas is not None:
+        slot_note = latex_escape(
+            "L1 anchoring is reported for slot_update. The campaign contains exactly "
+            f"{fmt_int(init_n)} slot_init observation, the first anchoring of the run, at "
+            f"{fmt_int(init_gas)} gas. The difference is the one-off cost of writing a "
+            "storage slot that was still zero, paid once for the lifetime of the "
+            "deployment; it belongs to whichever variant happened to anchor first, not "
+            "to its commitment scheme, so pooling it would overstate that variant's "
+            "cost and its variance. The remaining 24 gas of spread between repetitions "
+            "is calldata, not computation: two of the 68 bytes are zero in one "
+            "repetition, and a zero calldata byte costs 4 gas instead of 16."
+        )
+    else:
+        slot_note = ""
+
+    notes = table_notes(
+        delta_note,
+        baseline_note,
+        slot_note,
+        NOTE_EXCEEDS if EXCEEDS_BLOCK_LIMIT_LABEL in body else "",
+    )
     return f"""\\begin{{table*}}[!t]
 \\caption{{Block Commitment Cost per Variant: L2 Construction, Net of Baseline, and L1 Anchoring (mean $\\pm$ SD)}}
 \\label{{tab:commit-cost}}
 \\centering
 \\footnotesize
 \\setlength{{\\tabcolsep}}{{4pt}}
-\\begin{{tabular}}{{@{{}}lrrrrrrrrr@{{}}}}
+\\begin{{tabular}}{{@{{}}lrrrrrrrr@{{}}}}
 \\toprule
-& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{3}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$)}} \\\\
-\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-10}}
-\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) & L1 txs \\\\
+& \\multicolumn{{3}}{{c}}{{\\textbf{{L2 construction gas}} (\\texttt{{createBlock}})}} & \\multicolumn{{3}}{{c}}{{$\\Delta$ \\textbf{{vs. baseline}}}} & \\multicolumn{{2}}{{c}}{{\\textbf{{L1 anchoring}} (\\texttt{{submitBlock}}, $n=100$, slot\\_update)}} \\\\
+\\cmidrule(lr){{2-4}}\\cmidrule(lr){{5-7}}\\cmidrule(lr){{8-9}}
+\\textbf{{Variant}} & $n=10$ & $n=100$ & $n=1{{,}}000$ & $n=10$ & $n=100$ & $n=1{{,}}000$ & gas & calldata (B) \\\\
 \\midrule
 {body}
 \\bottomrule
@@ -534,6 +620,11 @@ def build_tab_sys_series(e1: dict[str, dict[str, str]]) -> str:
             diff_pct = diff / v0_mean * 100 if v0_mean else None
             diff_text = fmt_int(diff)
             diff_pct_text = fmt_pct(diff_pct)
+        elif cell_status(e1, v0_cell) == "exceeds_block_gas_limit" or cell_status(e1, ecc_cell) == "exceeds_block_gas_limit":
+            # Nothing to subtract: one side ran out of gas, so the
+            # difference does not exist rather than being unmeasured.
+            diff_text = NOT_APPLICABLE
+            diff_pct_text = NOT_APPLICABLE
         else:
             diff_text = fillin()
             diff_pct_text = fillin()
@@ -593,8 +684,11 @@ def build_tab_decomposition(e1: dict[str, dict[str, str]]) -> str:
             f"gas, so the boundary between the two contexts costs {fmt_int(overhead)} "
             "gas"
             + (
-                f", which is the full contract's own baseline overhead: the harness "
-                f"commits an empty block for {fmt_int(bench_base)} gas at the same n."
+                ". That gap matches the harness baseline to within "
+                f"{fmt_int(abs(overhead - bench_base))} gas -- the harness commits an "
+                f"empty block for {fmt_int(bench_base)} gas at the same n -- which is "
+                "consistent with the gap being the full contract's baseline overhead, "
+                "though the two are not identical."
                 if bench_base is not None
                 else "."
             )
@@ -719,13 +813,16 @@ def build_tab_op_gas(e2: dict[str, dict[str, str]]) -> str:
         block_a_venue_note = ""
 
     block_b_lines = []
-    for fn in E2_FUNCTIONS_L1_ASC_ONLY:
+    for cell_key, fn_label in E2_FUNCTIONS_L1_ASC_ONLY:
+        # Only the function name is \texttt{}; an "(n=100)" suffix is prose.
+        name, _, suffix = fn_label.partition(" ")
+        rendered = f"\\texttt{{{name}}}" + (f" {suffix}" if suffix else "")
         for state, state_label in [("slot_init", "slot\\_init"), ("slot_update", "slot\\_update")]:
-            asc_cell = f"e2.{fn}.{state}"
+            asc_cell = f"e2.{cell_key}.{state}"
             asc_text = gas_cell_text(e2, asc_cell)
             venue_text = _venue_text(e2, asc_cell)
             block_b_lines.append(
-                f"\\texttt{{{fn}}} ({state_label}) & {asc_text} & {venue_text} \\\\"
+                f"{rendered} ({state_label}) & {asc_text} & {venue_text} \\\\"
             )
     block_b_body = "\n".join(block_b_lines)
     # The exceeds-limit note is emitted only when a cell actually shows

@@ -128,6 +128,52 @@ def base_row(cell_id: str, records: list[dict[str, Any]], ok_records: list[dict[
     }
 
 
+L1_ANCHOR_MARKER = "l1_anchor"
+
+
+def split_l1_anchor_by_slot_state(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extra cells that separate the L1 anchoring records by SLOT STATE.
+
+    Every variant anchors into the same RootChainBench deployment, in one
+    unbroken run of blocks. The very first anchoring writes a storage slot
+    that was still zero and therefore pays the cold-write premium; every
+    later one updates an already-written slot. Measured: the first record
+    costs 114,953 gas and all 29 others cost 97,853 / 97,829 (ASC) or
+    74,976 (hash variants). 114,953 - 97,853 = 17,100, which is exactly
+    SSTORE-from-zero (20,000) minus a warm write (2,900).
+
+    Pooling the two states makes the mean of whichever variant happened to
+    run first look 3,420 gas more expensive with a 700x larger SD, for a
+    cost that belongs to the CONTRACT's initialization, not to that
+    variant's commitment scheme.
+
+    The rule, derived from the data rather than hardcoded per variant:
+    the single l1_anchor record with the lowest block_number in the run is
+    the slot_init observation; every other l1_anchor record is
+    slot_update. The pooled cell is still emitted unchanged, so nothing
+    that already reads it breaks.
+    """
+    anchors = [r for r in records if L1_ANCHOR_MARKER in str(r.get("cell_id", ""))]
+    anchors = [r for r in anchors if r.get("block_number") is not None]
+    if not anchors:
+        return []
+    first = min(anchors, key=lambda r: r["block_number"])
+    by_state: dict[str, list[dict[str, Any]]] = {}
+    for r in anchors:
+        state = "slot_init" if r is first else "slot_update"
+        by_state.setdefault(f"{r['cell_id']}.{state}", []).append(r)
+
+    rows = []
+    for cell_id, recs in sorted(by_state.items()):
+        ok_recs = [r for r in recs if r.get("status") in OK_STATUSES]
+        row = base_row(cell_id, recs, ok_recs)
+        for field_name in SCALAR_METRIC_FIELDS:
+            vals = [r[field_name] for r in ok_recs if r.get(field_name) is not None]
+            row.update(describe(vals, ALPHA).as_row(field_name))
+        rows.append(row)
+    return rows
+
+
 def aggregate_scalar_file(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """e1_commit_cost.jsonl / e2_sync_gas.jsonl shape: one scalar
     measurement per record (gas_used, and for E1's L1-anchor cells also
@@ -140,7 +186,8 @@ def aggregate_scalar_file(records: list[dict[str, Any]]) -> list[dict[str, Any]]
             vals = [r[field_name] for r in ok_recs if r.get(field_name) is not None]
             row.update(describe(vals, ALPHA).as_row(field_name))
         rows.append(row)
-    return rows
+    rows.extend(split_l1_anchor_by_slot_state(records))
+    return sorted(rows, key=lambda r: r["cell_id"])
 
 
 def e3_by_repetition_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
