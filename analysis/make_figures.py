@@ -123,8 +123,15 @@ def build_fig_gas_vs_n(e1: dict[str, dict[str, str]], out_path: Path) -> None:
         ax2.set_ylabel("Difference (gas)", color="#d62728")
         ax2.tick_params(axis="y", labelcolor="#d62728")
 
-    for n, label in exceeded:
-        ax1.annotate(f"{label}\nn={n}: exceeds block gas limit", xy=(n, ax1.get_ylim()[1]), xytext=(0, 5), textcoords="offset points", fontsize=7, ha="center", color="#d62728")
+    # Below the axes, not above the last point. Annotating at the top of
+    # the plot put this text straight through the legend box and the
+    # secondary axis label in the rendered PDF. Placing it under the axes
+    # in figure-fraction coordinates cannot collide with either, and is
+    # the same placement fig_throughput already uses for its own
+    # exceeds-limit note.
+    if exceeded:
+        note = "; ".join(f"{label} n={n}: exceeds block gas limit" for n, label in exceeded)
+        ax1.annotate(note, xy=(0.5, -0.20), xycoords="axes fraction", ha="center", fontsize=7, color="#d62728")
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     if diff_ns:

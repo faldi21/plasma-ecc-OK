@@ -132,7 +132,17 @@ def table_notes(*notes: str) -> str:
     text = " ".join(n.strip() for n in notes if n and n.strip())
     if not text:
         return ""
+    # The leading \\par is NOT cosmetic. After \\end{tabular} LaTeX is still
+    # in horizontal mode, so without it the note joins the SAME paragraph
+    # as the table and whatever words fit spill into the space beside the
+    # tabular. Seen in the PDF: tab_params rendered as "L2 block interval
+    # is configured" with the leading "No" stranded next to the table --
+    # the sentence said the opposite of the truth -- and other tables
+    # showed a stray "Note:" glued to a data row. A table whose tabular
+    # happens to fill the column width hides the bug, so this is emitted
+    # for every table with notes, not just the ones that looked wrong.
     return (
+        "\\par\n"
         "\\vspace{2pt}\n"
         "{\\footnotesize\\raggedright\n"
         "\\textit{Note:} " + text + "\\par}"
@@ -547,7 +557,7 @@ def build_tab_commit_cost(e1: dict[str, dict[str, str]], commit_cost: dict[str, 
         "Paired per (n, repetition, seed): "
         f"$\\Delta = \\text{{gas}}(\\text{{variant}}) - \\text{{gas}}(\\text{{{latex_escape(baseline_variant)}}})$ "
         "at the same n. Absolute gas (left) is descriptive; "
-        "equivalence/significance testing (ANALYSIS\\_PLAN.md Amandemen 1) runs on "
+        "equivalence/significance testing (ANALYSIS\\_PLAN.md Amendment 1) runs on "
         f"$\\Delta$, never on absolute gas. {epsilon_note}."
     )
     l2_notes = table_notes(
