@@ -400,12 +400,6 @@ cd frontend && npm run dev
 
 ---
 
-## Paper Citation
-
-> [Author]. "Plasma-UTXO with ECC Accumulator: A Deferred-Commitment Architecture for Scalable Layer 2 Blockchain." *IEEE [Journal/Conference]*, 2026.
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
