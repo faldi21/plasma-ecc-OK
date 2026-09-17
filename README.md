@@ -1,3 +1,15 @@
+> **This branch is superseded.** It holds the pre-restructuring application
+> layout. The performance figures on this page — ~4,800 TPS, ~1.65M gas per
+> element, and the per-operation gas numbers — are **withdrawn**. They were
+> produced by an implementation whose cost was dominated by avoidable
+> per-element scalar multiplication and per-operation memory allocation. They
+> are corrected and superseded by the measurement campaign on branch
+> `paper1-measurement`, tag `paper1-rev1-archive`, which also reports
+> throughput as hot-path ops/s rather than TPS. Do not cite the numbers on
+> this page.
+
+---
+
 # Plasma-UTXO-ECC: Elliptic Curve Accumulator for Layer 2 Plasma with UTXO Model
 
 > **IEEE Scopus Q1 Research Implementation**  
